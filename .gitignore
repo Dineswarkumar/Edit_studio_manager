@@ -19,3 +19,18 @@ _audit_tmp/
 .venv/
 .DS_Store
 .agents/
+
+# Android APK build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/assets/static/
+android/local.properties
+*.keystore
+*.jks
+*.idsig
+*.apk
+
+# Runtime caches/data
+thumbs/
+data/

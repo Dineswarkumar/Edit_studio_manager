@@ -10,3 +10,6 @@ opencv-python==5.0.0.93
 numpy==2.5.1
 pymupdf==1.28.2
 requests==2.34.2
+onnxruntime==1.32.0
+pytest==9.2.0
+httpx==0.28.1
