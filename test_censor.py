@@ -306,6 +306,124 @@ def test_nsfw_mode_does_not_shrink_to_eyes():
     assert chin_diff == 0, f"Eyes-only mask leaked onto lower face chin (diff={chin_diff})"
 
 
+def test_rotated_frame_nsfw_face_and_per_class_filtering():
+    from engine.censor_processor import (
+        BoundingBox,
+        FaceDetector,
+        NudeNetDetector,
+        _clip_box_away_from_faces,
+        _map_box_from_rotation,
+        _rotate_image_for_angle,
+    )
+
+    # 1. Verify _clip_box_away_from_faces handles upside-down and lying-down geometry
+    # Chest ABOVE an upside-down face should trim bottom edge, not wipe the box
+    upside_down_face = [BoundingBox(x=100, y=180, w=80, h=80, label="Face")]
+    chest_above = BoundingBox(x=90, y=50, w=110, h=150, label="NudeNet: Chest / Breast (Exposed)")
+    clipped_above = _clip_box_away_from_faces(chest_above, upside_down_face)
+    assert clipped_above is not None and clipped_above.y2 <= 180 and clipped_above.h >= 120
+
+    # 2. Verify FaceDetector recovers rotated faces (90, 180, 270, +45) with mapped landmarks
+    detector = FaceDetector()
+    upright = create_synthetic_face_image(360, 360, face_x=110, face_y=90, face_size=130)
+    for angle in (90.0, 180.0, 270.0, 45.0):
+        # Rotate upright face so detector must recover it via orientation probing
+        rot_img, _ = _rotate_image_for_angle(upright, angle)
+        faces, matched_angle = detector.detect_with_orientation(rot_img, check_orientations=True)
+        assert len(faces) >= 1, f"Failed to recover face rotated by {angle} deg"
+        assert faces[0].landmarks is not None and len(faces[0].landmarks) == 5
+
+    # 3. Verify NudeNetDetector orientation remapping (0/90/180/270/+45) and strict per-class filtering
+    nd = NudeNetDetector()
+    assert nd.is_available()
+    frame = np.zeros((320, 320, 3), dtype=np.uint8)
+    # Simulate a model that only fires when body patch is oriented upright (~rot90 or +45)
+    orig_infer = nd._infer_single_orientation
+
+    def fake_infer_only_at_rot90(img_bgr, conf_threshold, active_classes):
+        # Detect marker pixel placed at (x=100, y=120) in original -> in rot90 it moves to (rx=199, ry=100)
+        h, w = img_bgr.shape[:2]
+        if w == 320 and h == 320 and img_bgr[100, 199, 2] == 250:
+            all_preds = [
+                ([80.0, 60.0, 90.0, 90.0], 0.85, "FEMALE_BREAST_EXPOSED"),
+                ([160.0, 140.0, 80.0, 80.0], 0.82, "BUTTOCKS_EXPOSED"),
+            ]
+            kept = [p for p in all_preds if p[2] in active_classes]
+            return [p[0] for p in kept], [p[1] for p in kept], [p[2] for p in kept]
+        return [], [], []
+
+    frame[120, 100] = (0, 0, 250)  # sentinel in original coords
+    nd._infer_single_orientation = fake_infer_only_at_rot90
+    try:
+        only_buttocks, matched = nd.detect_with_orientation(
+            frame,
+            sensitivity=0.5,
+            allowed_classes=["BUTTOCKS_EXPOSED"],
+            check_orientations=True,
+        )
+        assert matched == 90.0
+        assert len(only_buttocks) == 1
+        assert "Buttocks" in only_buttocks[0].label
+
+        only_breast, _ = nd.detect_with_orientation(
+            frame,
+            sensitivity=0.5,
+            allowed_classes=["FEMALE_BREAST_EXPOSED"],
+            check_orientations=True,
+        )
+        assert len(only_breast) == 1
+        assert "Breast" in only_breast[0].label
+
+        # Verify oblique +45 inverse box mapping stays in bounds and close to center
+        rot45, m_inv = _rotate_image_for_angle(frame, 45.0)
+        mapped = _map_box_from_rotation(rot45.shape[1] * 0.5 - 30, rot45.shape[0] * 0.5 - 30, 60, 60, 45.0, 320, 320, m_inv=m_inv)
+        assert mapped is not None and 110 <= mapped[0] <= 150 and 110 <= mapped[1] <= 150
+    finally:
+        nd._infer_single_orientation = orig_infer
+
+
+def test_rotated_nsfw_video_keyframe_fallback_and_tracking():
+    in_vid = os.path.join(TEST_DIR, "nsfw_rot_input.mp4")
+    out_vid = os.path.join(TEST_DIR, "nsfw_rot_output.mp4")
+    w, h, fps = 320, 320, 10.0
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(in_vid, fourcc, fps, (w, h))
+    base = create_synthetic_face_image(320, 320, face_x=100, face_y=80, face_size=120)
+    rot_base = cv2.rotate(base, cv2.ROTATE_90_CLOCKWISE)
+    for _ in range(10):
+        writer.write(rot_base)
+    writer.release()
+
+    proc = CensorProcessor()
+    orig_infer = proc.nudenet._infer_single_orientation
+    seen_angles = []
+
+    def fake_rot270_infer(img_bgr, conf_threshold, active_classes):
+        # 270 deg CW undoes the 90 deg CW rotation applied to `base`
+        # Check if upright nose region matches `base` vs `rot_base`
+        if int(img_bgr[80 + 55, 100 + 60, 2]) > 140:
+            seen_angles.append("hit")
+            return [[90.0, 200.0, 120.0, 80.0]], [0.88], ["BUTTOCKS_EXPOSED"]
+        return [], [], []
+
+    proc.nudenet._infer_single_orientation = fake_rot270_infer
+    try:
+        cfg = MaskConfig(mask_type="redact", shape="rect", mask_region="eyes", redact_text="")
+        proc.process_video(in_vid, out_vid, cfg, mode="nsfw", nsfw_sensitivity=0.5, nsfw_classes=["BUTTOCKS_EXPOSED"])
+    finally:
+        proc.nudenet._infer_single_orientation = orig_infer
+
+    assert os.path.isfile(out_vid) and os.path.getsize(out_vid) > 0
+    assert len(seen_angles) >= 2
+    cap = cv2.VideoCapture(out_vid)
+    ret, first = cap.read()
+    cap.release()
+    assert ret and first is not None
+    # Keyframe preferred angle + forced full-region redaction must darken the tracked NSFW box
+    # Original chest [90:210, 200:280] rotated 90 CW maps into lower-left of rot_base
+    assert float(first.mean()) < float(rot_base.mean()) - 3.0
+
+
 if __name__ == "__main__":
     test_safe_io()
     test_face_detector()
@@ -318,6 +436,8 @@ if __name__ == "__main__":
     test_brush_and_eraser_subtraction()
     test_nudenet_detector_loaded_and_filtering()
     test_nsfw_mode_does_not_shrink_to_eyes()
+    test_rotated_frame_nsfw_face_and_per_class_filtering()
+    test_rotated_nsfw_video_keyframe_fallback_and_tracking()
     print("\n==============================================")
     print("ALL DIVERSIFIED CENSOR ENGINE TESTS PASSED! 🚀")
     print("==============================================")

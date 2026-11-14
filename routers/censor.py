@@ -554,8 +554,12 @@ def api_censor_process_batch(req: CensorBatchProcessRequest):
                 if item.auto_detect_nsfw:
                     detect_fn = getattr(processor, "detect_nsfw_frame", None)
                     if callable(detect_fn):
+                        batch_faces = [b for b in img_boxes if getattr(b, "label", "") == "Face"]
+                        if not batch_faces:
+                            batch_faces = processor.detector.detect(frame, padding_percent=0.05)
                         detect_kwargs = dict(
                             sensitivity=req.nsfw_sensitivity,
+                            face_boxes=batch_faces,
                             allowed_classes=req.nsfw_classes,
                         )
                         if "check_orientations" in detect_fn.__code__.co_varnames:
@@ -563,7 +567,13 @@ def api_censor_process_batch(req: CensorBatchProcessRequest):
                         nsfw_boxes, _, _ = detect_fn(frame, **detect_kwargs)
                         img_boxes.extend(nsfw_boxes)
                     else:
-                        img_boxes.extend(processor.detect_image_nsfw(media_path, sensitivity=req.nsfw_sensitivity))
+                        img_boxes.extend(
+                            processor.detect_image_nsfw(
+                                media_path,
+                                sensitivity=req.nsfw_sensitivity,
+                                allowed_classes=req.nsfw_classes,
+                            )
+                        )
 
                 masked = apply_masks_to_frame(frame, img_boxes, item_cfg) if img_boxes else frame.copy()
 

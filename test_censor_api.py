@@ -396,6 +396,62 @@ def test_api_nsfw_all_classes_and_ignores_eyes_region():
         client.delete(f"/api/media/{fid}")
 
 
+def test_api_per_class_nsfw_filtering_and_rotated_face_detect():
+    from routers.censor import get_censor_processor
+
+    # Upload a 90 deg CW rotated face image and confirm /api/censor/detect-faces recovers it
+    img_path = os.path.join(TEST_DIR, "test_rot90_face.jpg")
+    upright = create_synthetic_face_image(360, 360, face_x=110, face_y=90, face_size=130)
+    rot90 = cv2.rotate(upright, cv2.ROTATE_90_CLOCKWISE)
+    cv2.imwrite(img_path, rot90)
+
+    with open(img_path, "rb") as f:
+        up = client.post("/api/upload-media", files={"files": ("test_rot90_face.jpg", f, "image/jpeg")})
+    assert up.status_code == 200
+    fid = up.json()["media"][0]["id"]
+    try:
+        df = client.post("/api/censor/detect-faces", json={"file_id": fid, "padding_percent": 0.1})
+        assert df.status_code == 200, df.text
+        assert len(df.json()["faces"]) >= 1, "API failed to detect 90-degree rotated face"
+
+        proc = get_censor_processor()
+        orig_infer = proc.nudenet._infer_single_orientation
+
+        def fake_multi_class(img_bgr, conf_threshold, active_classes):
+            preds = [
+                ([40.0, 40.0, 80.0, 80.0], 0.88, "BUTTOCKS_EXPOSED"),
+                ([160.0, 120.0, 80.0, 80.0], 0.85, "FEMALE_BREAST_EXPOSED"),
+            ]
+            kept = [p for p in preds if p[2] in active_classes]
+            return [p[0] for p in kept], [p[1] for p in kept], [p[2] for p in kept]
+
+        proc.nudenet._infer_single_orientation = fake_multi_class
+        try:
+            r_butt = client.post("/api/censor/detect-nsfw", json={
+                "file_id": fid,
+                "sensitivity": 0.5,
+                "exclude_faces": False,
+                "nsfw_classes": ["BUTTOCKS_EXPOSED"],
+            })
+            assert r_butt.status_code == 200, r_butt.text
+            cands = r_butt.json()["candidates"]
+            assert len(cands) == 1 and "Buttocks" in cands[0]["label"]
+
+            r_breast = client.post("/api/censor/detect-nsfw", json={
+                "file_id": fid,
+                "sensitivity": 0.5,
+                "exclude_faces": False,
+                "nsfw_classes": ["FEMALE_BREAST_EXPOSED"],
+            })
+            assert r_breast.status_code == 200, r_breast.text
+            cands2 = r_breast.json()["candidates"]
+            assert len(cands2) == 1 and "Breast" in cands2[0]["label"]
+        finally:
+            proc.nudenet._infer_single_orientation = orig_infer
+    finally:
+        client.delete(f"/api/media/{fid}")
+
+
 if __name__ == "__main__":
     test_api_censor_image_flow()
     test_api_censor_video_flow()
@@ -405,6 +461,7 @@ if __name__ == "__main__":
     test_api_lan_pin_auth_guard()
     test_api_null_eraser_and_large_brush_radius()
     test_api_nsfw_all_classes_and_ignores_eyes_region()
+    test_api_per_class_nsfw_filtering_and_rotated_face_detect()
     print("\n==============================================")
     print("ALL CENSOR API END-TO-END TESTS PASSED! 🚀")
     print("==============================================")

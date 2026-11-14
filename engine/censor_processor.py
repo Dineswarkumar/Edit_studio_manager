@@ -236,9 +236,101 @@ class FaceDetector:
         img_bgr: np.ndarray,
         padding_percent: float = 0.0,
         face_fit: str = "standard",
+        check_orientations: bool = True,
     ) -> List[BoundingBox]:
         """
-        Detects faces in a BGR image using OpenCV YuNet, filtering out body/torso
+        Detects faces in a BGR image using OpenCV YuNet, automatically checking rotated
+        orientations (90/270/180 and oblique tilts) when upright detection finds nothing.
+        """
+        boxes, _ = self.detect_with_orientation(
+            img_bgr,
+            padding_percent=padding_percent,
+            face_fit=face_fit,
+            check_orientations=check_orientations,
+        )
+        return boxes
+
+    def detect_with_orientation(
+        self,
+        img_bgr: np.ndarray,
+        padding_percent: float = 0.0,
+        face_fit: str = "standard",
+        check_orientations: bool = True,
+        preferred_angle: float = 0.0,
+    ) -> Tuple[List[BoundingBox], float]:
+        """
+        Runs upright detection first and optionally probes rotated/tilted orientations,
+        returning (boxes_in_original_coords, matched_angle_deg).
+        """
+        if img_bgr is None or self._detector is None:
+            return [], 0.0
+
+        h_orig, w_orig = img_bgr.shape[:2]
+        if w_orig < 10 or h_orig < 10:
+            return [], 0.0
+
+        upright = self._detect_single_orientation(img_bgr, padding_percent=padding_percent, face_fit=face_fit)
+        if upright:
+            return upright, 0.0
+
+        candidate_angles: List[float] = []
+        if preferred_angle:
+            candidate_angles.append(float(preferred_angle))
+        if check_orientations:
+            for ang in (*_CARDINAL_ANGLES, *_OBLIQUE_ANGLES):
+                if ang not in candidate_angles:
+                    candidate_angles.append(ang)
+
+        for angle in candidate_angles:
+            rot_img, m_inv = _rotate_image_for_angle(img_bgr, angle)
+            rot_boxes = self._detect_single_orientation(rot_img, padding_percent=padding_percent, face_fit=face_fit)
+            if not rot_boxes:
+                continue
+            mapped_boxes: List[BoundingBox] = []
+            for rb in rot_boxes:
+                mapped_xywh = _map_box_from_rotation(
+                    float(rb.x),
+                    float(rb.y),
+                    float(rb.w),
+                    float(rb.h),
+                    angle,
+                    w_orig,
+                    h_orig,
+                    m_inv=m_inv,
+                    oblique_shrink=0.88,
+                )
+                if mapped_xywh is None:
+                    continue
+                mx, my, mw, mh = mapped_xywh
+                mapped_lms = (
+                    _map_points_from_rotation(rb.landmarks, angle, w_orig, h_orig, m_inv=m_inv)
+                    if rb.landmarks
+                    else None
+                )
+                mapped_boxes.append(
+                    BoundingBox(
+                        x=max(0, int(round(mx))),
+                        y=max(0, int(round(my))),
+                        w=max(4, int(round(mw))),
+                        h=max(4, int(round(mh))),
+                        confidence=rb.confidence,
+                        landmarks=mapped_lms,
+                        label=rb.label,
+                    )
+                )
+            if mapped_boxes:
+                return mapped_boxes, float(angle)
+
+        return [], 0.0
+
+    def _detect_single_orientation(
+        self,
+        img_bgr: np.ndarray,
+        padding_percent: float = 0.0,
+        face_fit: str = "standard",
+    ) -> List[BoundingBox]:
+        """
+        Detects upright faces in a BGR image using OpenCV YuNet, filtering out body/torso
         false positives via geometry, landmark anatomy, and skin-continuity checks.
         `face_fit="exact"` tightens onto only the visible facial area inside frame bounds.
         """
@@ -465,14 +557,174 @@ def _extract_band_box(
     return BoundingBox(x=bx1, y=by1, w=bx2 - bx1, h=by2 - by1, confidence=confidence, label=label)
 
 
+_CARDINAL_ANGLES: Tuple[float, ...] = (90.0, 270.0, 180.0)
+_OBLIQUE_ANGLES: Tuple[float, ...] = (45.0, -45.0, 35.0, -35.0)
+
+
+def _rotate_image_for_angle(
+    img_bgr: np.ndarray,
+    angle_deg: float,
+) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """
+    Rotates `img_bgr` by `angle_deg` (cardinal 90/180/270 or arbitrary oblique tilt with
+    expanded bounds) and returns `(rotated_bgr, inverse_affine_2x3_or_None)`.
+    """
+    norm = round(float(angle_deg), 2) % 360.0
+    if norm == 0.0:
+        return img_bgr, None
+    if norm == 90.0:
+        return cv2.rotate(img_bgr, cv2.ROTATE_90_CLOCKWISE), None
+    if norm == 180.0:
+        return cv2.rotate(img_bgr, cv2.ROTATE_180), None
+    if norm == 270.0:
+        return cv2.rotate(img_bgr, cv2.ROTATE_90_COUNTERCLOCKWISE), None
+
+    h, w = img_bgr.shape[:2]
+    center = (w * 0.5, h * 0.5)
+    m = cv2.getRotationMatrix2D(center, float(angle_deg), 1.0)
+    cos_a = abs(float(m[0, 0]))
+    sin_a = abs(float(m[0, 1]))
+    new_w = max(8, int(round(h * sin_a + w * cos_a)))
+    new_h = max(8, int(round(h * cos_a + w * sin_a)))
+    m[0, 2] += (new_w * 0.5) - center[0]
+    m[1, 2] += (new_h * 0.5) - center[1]
+    rotated = cv2.warpAffine(
+        img_bgr,
+        m,
+        (new_w, new_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(114, 114, 114),
+    )
+    m_inv = cv2.invertAffineTransform(m)
+    return rotated, m_inv
+
+
+def _map_points_from_rotation(
+    points: List[Tuple[float, float]],
+    angle_deg: float,
+    orig_w: int,
+    orig_h: int,
+    m_inv: Optional[np.ndarray] = None,
+) -> List[Tuple[float, float]]:
+    """Maps 2D points from rotated coordinates back to the original image space."""
+    norm = round(float(angle_deg), 2) % 360.0
+    if norm == 0.0:
+        return list(points)
+    fw, fh = float(orig_w), float(orig_h)
+    mapped: List[Tuple[float, float]] = []
+    if norm == 90.0:
+        for rx, ry in points:
+            mapped.append((ry, fh - rx))
+    elif norm == 180.0:
+        for rx, ry in points:
+            mapped.append((fw - rx, fh - ry))
+    elif norm == 270.0:
+        for rx, ry in points:
+            mapped.append((fw - ry, rx))
+    elif m_inv is not None:
+        a00, a01, a02 = float(m_inv[0, 0]), float(m_inv[0, 1]), float(m_inv[0, 2])
+        a10, a11, a12 = float(m_inv[1, 0]), float(m_inv[1, 1]), float(m_inv[1, 2])
+        for rx, ry in points:
+            mapped.append((a00 * rx + a01 * ry + a02, a10 * rx + a11 * ry + a12))
+    else:
+        return list(points)
+    return [(max(0.0, min(fw, ox)), max(0.0, min(fh, oy))) for ox, oy in mapped]
+
+
+def _map_box_from_rotation(
+    rx: float,
+    ry: float,
+    rw: float,
+    rh: float,
+    angle_deg: float,
+    orig_w: int,
+    orig_h: int,
+    m_inv: Optional[np.ndarray] = None,
+    oblique_shrink: float = 0.85,
+) -> Optional[Tuple[float, float, float, float]]:
+    """Maps an axis-aligned `[x, y, w, h]` box from rotated space back into original bounds."""
+    norm = round(float(angle_deg), 2) % 360.0
+    fw, fh = float(orig_w), float(orig_h)
+    if norm == 0.0:
+        ox, oy, ow, oh = rx, ry, rw, rh
+    elif norm == 90.0:
+        ox = ry
+        oy = fh - (rx + rw)
+        ow = rh
+        oh = rw
+    elif norm == 180.0:
+        ox = fw - (rx + rw)
+        oy = fh - (ry + rh)
+        ow = rw
+        oh = rh
+    elif norm == 270.0:
+        ox = fw - (ry + rh)
+        oy = rx
+        ow = rh
+        oh = rw
+    elif m_inv is not None:
+        corners = _map_points_from_rotation(
+            [(rx, ry), (rx + rw, ry), (rx + rw, ry + rh), (rx, ry + rh)],
+            angle_deg,
+            orig_w,
+            orig_h,
+            m_inv=m_inv,
+        )
+        xs = [pt[0] for pt in corners]
+        ys = [pt[1] for pt in corners]
+        ax1, ax2 = min(xs), max(xs)
+        ay1, ay2 = min(ys), max(ys)
+        cx = 0.5 * (ax1 + ax2)
+        cy = 0.5 * (ay1 + ay2)
+        ow = (ax2 - ax1) * oblique_shrink
+        oh = (ay2 - ay1) * oblique_shrink
+        ox = cx - ow * 0.5
+        oy = cy - oh * 0.5
+    else:
+        return None
+
+    cx1 = max(0.0, min(fw, ox))
+    cy1 = max(0.0, min(fh, oy))
+    cx2 = max(0.0, min(fw, ox + ow))
+    cy2 = max(0.0, min(fh, oy + oh))
+    bw = cx2 - cx1
+    bh = cy2 - cy1
+    if bw < 8.0 or bh < 8.0:
+        return None
+    return (cx1, cy1, bw, bh)
+
+
 def _clip_box_away_from_faces(box: BoundingBox, face_boxes: List[BoundingBox]) -> Optional[BoundingBox]:
-    """Ensures an NSFW box never overlaps any detected face region."""
+    """
+    Ensures an NSFW box never overlaps any detected face region by trimming
+    along whichever edge preserves the largest valid remainder (handles upright,
+    sideways, and upside-down subjects).
+    """
     x1, y1, x2, y2 = box.x, box.y, box.x2, box.y2
     for fb in face_boxes:
         horiz_overlap = min(x2, fb.x2) - max(x1, fb.x)
         vert_overlap = min(y2, fb.y2) - max(y1, fb.y)
         if horiz_overlap > 0 and vert_overlap > 0:
-            y1 = max(y1, fb.y2 + 4)
+            candidates = [
+                (x1, max(y1, fb.y2 + 4), x2, y2),   # keep below face
+                (x1, y1, x2, min(y2, fb.y - 4)),    # keep above face (upside-down)
+                (max(x1, fb.x2 + 4), y1, x2, y2),   # keep right of face (lying)
+                (x1, y1, min(x2, fb.x - 4), y2),    # keep left of face (lying)
+            ]
+            best_cand: Optional[Tuple[int, int, int, int]] = None
+            best_area = 0
+            for cx1, cy1, cx2, cy2 in candidates:
+                cw = cx2 - cx1
+                ch = cy2 - cy1
+                if cw >= 12 and ch >= 16:
+                    area = cw * ch
+                    if area > best_area:
+                        best_area = area
+                        best_cand = (cx1, cy1, cx2, cy2)
+            if best_cand is None:
+                return None
+            x1, y1, x2, y2 = best_cand
     if y2 - y1 < 16 or x2 - x1 < 12:
         return None
     return BoundingBox(
@@ -719,66 +971,114 @@ class NudeNetDetector:
             kept_labels.append(cls_name)
         return boxes_xywh, scores, kept_labels
 
-    def detect(
+    def _run_angle_into(
+        self,
+        img_bgr: np.ndarray,
+        angle_deg: float,
+        conf_threshold: float,
+        active_classes: Set[str],
+        boxes_xywh: List[List[float]],
+        scores: List[float],
+        kept_labels: List[str],
+    ) -> Tuple[int, float]:
+        """Runs single-pass inference at `angle_deg`, remapping hits into original image coords."""
+        h_orig, w_orig = img_bgr.shape[:2]
+        rot_img, m_inv = _rotate_image_for_angle(img_bgr, angle_deg)
+        raw_boxes, raw_scores, raw_labels = self._infer_single_orientation(rot_img, conf_threshold, active_classes)
+        added = 0
+        score_sum = 0.0
+        for (rx, ry, rw, rh), sc, lbl in zip(raw_boxes, raw_scores, raw_labels):
+            mapped = _map_box_from_rotation(
+                rx, ry, rw, rh, angle_deg, w_orig, h_orig, m_inv=m_inv, oblique_shrink=0.85
+            )
+            if mapped is None:
+                continue
+            boxes_xywh.append(list(mapped))
+            scores.append(sc)
+            kept_labels.append(lbl)
+            added += 1
+            score_sum += sc
+        return added, score_sum
+
+    def detect_with_orientation(
         self,
         img_bgr: np.ndarray,
         sensitivity: float = 0.5,
         allowed_classes: Optional[List[str]] = None,
         face_boxes: Optional[List[BoundingBox]] = None,
         check_orientations: bool = False,
-    ) -> List[BoundingBox]:
+        preferred_angle: float = 0.0,
+    ) -> Tuple[List[BoundingBox], float]:
+        """
+        Detects requested NudeNet body classes, probing preferred, cardinal (90/270/180),
+        and oblique tilt angles when needed, returning `(boxes, best_angle_deg)`.
+        """
         if img_bgr is None or not self._ensure_loaded() or self._session is None:
-            return []
+            return [], 0.0
 
         h_orig, w_orig = img_bgr.shape[:2]
         if h_orig < 8 or w_orig < 8:
-            return []
+            return [], 0.0
 
         active_classes = set(allowed_classes) if allowed_classes is not None else set(DEFAULT_NSFW_CLASSES)
         active_classes -= NUDENET_FACE_CLASSES
         if not active_classes:
-            return []
+            return [], 0.0
 
         # Sensitivity 0..1 maps inversely to confidence threshold (higher sensitivity = lower threshold)
         sens = max(0.0, min(1.0, float(sensitivity)))
         conf_threshold = max(0.16, min(0.62, 0.54 - sens * 0.34))
 
         boxes_xywh, scores, kept_labels = self._infer_single_orientation(img_bgr, conf_threshold, active_classes)
+        tried: Set[float] = {0.0}
+        best_angle = 0.0
+        best_score_sum = sum(scores) if boxes_xywh else 0.0
 
-        # Recover lying-down / sideways torso poses on single-frame/image scans
-        if check_orientations and (not boxes_xywh or sens >= 0.65):
-            # 90 deg CW: rot(H_r=w_orig, W_r=h_orig), point (rx, ry) -> orig (ry, h_orig - rx)
-            rot90 = cv2.rotate(img_bgr, cv2.ROTATE_90_CLOCKWISE)
-            b90, s90, l90 = self._infer_single_orientation(rot90, conf_threshold, active_classes)
-            for (rx, ry, rw, rh), sc, lbl in zip(b90, s90, l90):
-                ox = ry
-                oy = max(0.0, float(h_orig) - (rx + rw))
-                ow = min(rh, float(w_orig) - ox)
-                oh = min(rw, float(h_orig) - oy)
-                if ow >= 8 and oh >= 8:
-                    boxes_xywh.append([ox, oy, ow, oh])
-                    scores.append(sc)
-                    kept_labels.append(lbl)
+        pref = round(float(preferred_angle), 2)
+        if pref and (pref % 360.0) != 0.0 and (not boxes_xywh or (check_orientations and sens >= 0.60 and len(boxes_xywh) < 2)):
+            tried.add(pref % 360.0)
+            added, sc_sum = self._run_angle_into(
+                img_bgr, pref, conf_threshold, active_classes, boxes_xywh, scores, kept_labels
+            )
+            if added > 0 and sc_sum > best_score_sum:
+                best_angle = pref
+                best_score_sum = sc_sum
 
-            # 270 deg CW (90 CCW): point (rx, ry) -> orig (w_orig - ry, rx)
-            rot270 = cv2.rotate(img_bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            b270, s270, l270 = self._infer_single_orientation(rot270, conf_threshold, active_classes)
-            for (rx, ry, rw, rh), sc, lbl in zip(b270, s270, l270):
-                ox = max(0.0, float(w_orig) - (ry + rh))
-                oy = rx
-                ow = min(rh, float(w_orig) - ox)
-                oh = min(rw, float(h_orig) - oy)
-                if ow >= 8 and oh >= 8:
-                    boxes_xywh.append([ox, oy, ow, oh])
-                    scores.append(sc)
-                    kept_labels.append(lbl)
+        # Recover lying-down, upside-down, and tilted poses when upright detection misses or yields few hits
+        if check_orientations:
+            need_cardinal = (not boxes_xywh) or (sens >= 0.60 and len(boxes_xywh) < 2)
+            if need_cardinal:
+                for ang in _CARDINAL_ANGLES:
+                    if (ang % 360.0) in tried:
+                        continue
+                    tried.add(ang % 360.0)
+                    added, sc_sum = self._run_angle_into(
+                        img_bgr, ang, conf_threshold, active_classes, boxes_xywh, scores, kept_labels
+                    )
+                    if added > 0 and sc_sum > best_score_sum:
+                        best_angle = ang
+                        best_score_sum = sc_sum
+
+            if not boxes_xywh:
+                for ang in _OBLIQUE_ANGLES:
+                    if (ang % 360.0) in tried:
+                        continue
+                    tried.add(ang % 360.0)
+                    added, sc_sum = self._run_angle_into(
+                        img_bgr, ang, conf_threshold, active_classes, boxes_xywh, scores, kept_labels
+                    )
+                    if added > 0:
+                        if sc_sum > best_score_sum:
+                            best_angle = ang
+                            best_score_sum = sc_sum
+                        break
 
         if not boxes_xywh:
-            return []
+            return [], best_angle
 
         indices = cv2.dnn.NMSBoxes(boxes_xywh, scores, conf_threshold, 0.45)
         if len(indices) == 0:
-            return []
+            return [], best_angle
 
         results: List[BoundingBox] = []
         faces = face_boxes or []
@@ -800,7 +1100,24 @@ class NudeNetDetector:
             clipped = _clip_box_away_from_faces(box, faces) if faces else box
             if clipped is not None:
                 results.append(clipped)
-        return results
+        return results, best_angle
+
+    def detect(
+        self,
+        img_bgr: np.ndarray,
+        sensitivity: float = 0.5,
+        allowed_classes: Optional[List[str]] = None,
+        face_boxes: Optional[List[BoundingBox]] = None,
+        check_orientations: bool = False,
+    ) -> List[BoundingBox]:
+        boxes, _ = self.detect_with_orientation(
+            img_bgr,
+            sensitivity=sensitivity,
+            allowed_classes=allowed_classes,
+            face_boxes=face_boxes,
+            check_orientations=check_orientations,
+        )
+        return boxes
 
 
 def _get_shared_nudenet_detector() -> NudeNetDetector:
@@ -831,6 +1148,7 @@ class VideoFaceTracker:
         # visible gaps whenever a subject moved quickly or turned their head.
         self.detection_interval = 1
         self.last_detection_frame = -self.detection_interval
+        self.preferred_angle: float = 0.0
 
     def update(self, frame_bgr: np.ndarray, frame_idx: int) -> List[BoundingBox]:
         if self.active_tracks and frame_idx - self.last_detection_frame < self.detection_interval:
@@ -840,11 +1158,27 @@ class VideoFaceTracker:
                 if tinfo.get("confirmed", True)
             ]
 
-        detected_boxes = self.detector.detect(
-            frame_bgr,
-            padding_percent=self.padding_percent,
-            face_fit=self.face_fit,
+        is_keyframe = (
+            (frame_idx == 0)
+            or (frame_idx % 8 == 0)
+            or (not self.active_tracks and frame_idx % 4 == 0)
         )
+        if hasattr(self.detector, "detect_with_orientation"):
+            detected_boxes, matched_angle = self.detector.detect_with_orientation(
+                frame_bgr,
+                padding_percent=self.padding_percent,
+                face_fit=self.face_fit,
+                check_orientations=is_keyframe,
+                preferred_angle=self.preferred_angle,
+            )
+            if detected_boxes:
+                self.preferred_angle = matched_angle
+        else:
+            detected_boxes = self.detector.detect(
+                frame_bgr,
+                padding_percent=self.padding_percent,
+                face_fit=self.face_fit,
+            )
         self.last_detection_frame = frame_idx
         h, w = frame_bgr.shape[:2]
         diag = math.hypot(w, h)
@@ -1661,6 +1995,7 @@ class CensorProcessor:
         nsfw_face_tracker = VideoFaceTracker(self.detector, max_lost_frames=8, padding_percent=0.10) if mode == "nsfw" else None
         nsfw_tracks: Dict[int, dict] = {}
         nsfw_next_id = 1
+        nsfw_preferred_angle: float = 0.0
         resolved_single_id: Optional[int] = selected_track_id if (mode == "face_single" and selected_face_box is None) else None
         last_focused_box: Optional[BoundingBox] = selected_face_box
         excluded_track_ids: Set[int] = set()
@@ -1725,12 +2060,30 @@ class CensorProcessor:
 
                 elif mode == "nsfw":
                     tracked_faces = nsfw_face_tracker.update(frame, frame_idx) if nsfw_face_tracker is not None else []
-                    raw_nsfw, _, _ = self.detect_nsfw_frame(
-                        frame,
-                        sensitivity=nsfw_sensitivity,
-                        face_boxes=tracked_faces,
-                        allowed_classes=nsfw_classes,
+                    nsfw_is_keyframe = (
+                        (frame_idx == 0)
+                        or (frame_idx % 8 == 0)
+                        or (not nsfw_tracks and frame_idx % 4 == 0)
                     )
+                    if self.nudenet._ensure_loaded() and hasattr(self.nudenet, "detect_with_orientation"):
+                        raw_nsfw, matched_nsfw_angle = self.nudenet.detect_with_orientation(
+                            frame,
+                            sensitivity=nsfw_sensitivity,
+                            allowed_classes=nsfw_classes,
+                            face_boxes=tracked_faces,
+                            check_orientations=nsfw_is_keyframe,
+                            preferred_angle=nsfw_preferred_angle,
+                        )
+                        if raw_nsfw:
+                            nsfw_preferred_angle = matched_nsfw_angle
+                    else:
+                        raw_nsfw, _, _ = self.detect_nsfw_frame(
+                            frame,
+                            sensitivity=nsfw_sensitivity,
+                            face_boxes=tracked_faces,
+                            allowed_classes=nsfw_classes,
+                            check_orientations=nsfw_is_keyframe,
+                        )
                     matched_nsfw = set()
                     unmatched_nsfw = []
                     for d_box in raw_nsfw:
@@ -1780,7 +2133,7 @@ class CensorProcessor:
                     for tid in list(nsfw_tracks.keys()):
                         if tid not in matched_nsfw:
                             nsfw_tracks[tid]["lost"] += 1
-                            if nsfw_tracks[tid]["lost"] > 4:
+                            if nsfw_tracks[tid]["lost"] > 8:
                                 stale_nsfw.append(tid)
                             else:
                                 clipped = _clip_box_away_from_faces(nsfw_tracks[tid]["box"], tracked_faces)
