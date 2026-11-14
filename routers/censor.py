@@ -362,6 +362,8 @@ def video_censor_worker(
 ):
     processor = get_censor_processor()
     mask_cfg = _build_censor_mask_config(req.mask_config)
+    if req.mode in ("nsfw", "specific_object"):
+        mask_cfg.mask_region = "face"
     media_path = os.path.join(UPLOADS_DIR, media["saved_filename"])
 
     try:
@@ -444,6 +446,8 @@ def api_censor_process(req: CensorProcessRequest, background_tasks: BackgroundTa
 
     if media["media_type"] == "image":
         mask_cfg = _build_censor_mask_config(req.mask_config)
+        if req.mode in ("nsfw", "specific_object"):
+            mask_cfg.mask_region = "face"
         processor = get_censor_processor()
         file_uid = uuid.uuid4().hex[:8]
         img_ext = ext if ext.lower() in IMAGE_EXTENSIONS else ".jpg"
@@ -455,7 +459,7 @@ def api_censor_process(req: CensorProcessRequest, background_tasks: BackgroundTa
             img_kwargs = dict(
                 custom_boxes=custom_bboxes,
                 auto_detect_all=(req.mode == "faces_all" and len(custom_bboxes) == 0),
-                auto_detect_nsfw=(req.mode == "nsfw"),
+                auto_detect_nsfw=(req.mode == "nsfw" and len(custom_bboxes) == 0),
                 nsfw_sensitivity=req.nsfw_sensitivity,
             )
             if "nsfw_classes" in processor.process_image.__code__.co_varnames:
@@ -541,6 +545,8 @@ def api_censor_process_batch(req: CensorBatchProcessRequest):
                     raise HTTPException(status_code=400, detail=f"Could not decode image: {media.get('filename')}")
 
                 item_cfg = _build_censor_mask_config(item.mask_config or req.mask_config)
+                if item.mode in ("nsfw", "specific_object") or (item.auto_detect_nsfw and not item.auto_detect_faces):
+                    item_cfg.mask_region = "face"
                 img_boxes = [_to_bounding_box(b) for b in item.boxes]
                 if item.auto_detect_faces:
                     pad = getattr(item_cfg, "padding_percent", 0.20)
@@ -548,11 +554,13 @@ def api_censor_process_batch(req: CensorBatchProcessRequest):
                 if item.auto_detect_nsfw:
                     detect_fn = getattr(processor, "detect_nsfw_frame", None)
                     if callable(detect_fn):
-                        nsfw_boxes, _, _ = detect_fn(
-                            frame,
+                        detect_kwargs = dict(
                             sensitivity=req.nsfw_sensitivity,
                             allowed_classes=req.nsfw_classes,
                         )
+                        if "check_orientations" in detect_fn.__code__.co_varnames:
+                            detect_kwargs["check_orientations"] = True
+                        nsfw_boxes, _, _ = detect_fn(frame, **detect_kwargs)
                         img_boxes.extend(nsfw_boxes)
                     else:
                         img_boxes.extend(processor.detect_image_nsfw(media_path, sensitivity=req.nsfw_sensitivity))
@@ -664,6 +672,8 @@ def batch_video_censor_worker(job_id: str, req: CensorBatchProcessRequest):
                 if item.auto_detect_nsfw
                 else ("faces_all" if item.auto_detect_faces else "specific_object")
             )
+            if mode in ("nsfw", "specific_object"):
+                item_cfg.mask_region = "face"
 
             try:
                 def on_prog(pct, i=idx, rec=item_rec):

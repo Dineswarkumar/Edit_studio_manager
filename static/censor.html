@@ -246,6 +246,10 @@
 
             <details class="nsfw-parts-accordion" id="nsfwPartsAccordion" open>
               <summary>Body Parts to Auto-Mask <span>▾</span></summary>
+              <div style="display: flex; gap: 6px; margin-top: 6px;">
+                <button type="button" class="btn-secondary" id="btnNsfwSelectDefaults" style="flex: 1; padding: 3px 6px; font-size: 10px;">Exposed Defaults</button>
+                <button type="button" class="btn-secondary" id="btnNsfwSelectAll" style="flex: 1; padding: 3px 6px; font-size: 10px;">All 16 Body Parts</button>
+              </div>
               <div class="nsfw-parts-grid" id="nsfwPartsCheckboxes">
                 <label><input type="checkbox" value="FEMALE_GENITALIA_EXPOSED" checked> Genitalia (F)</label>
                 <label><input type="checkbox" value="MALE_GENITALIA_EXPOSED" checked> Genitalia (M)</label>
@@ -255,10 +259,14 @@
                 <label><input type="checkbox" value="FEMALE_BREAST_COVERED"> Chest (Covered)</label>
                 <label><input type="checkbox" value="FEMALE_GENITALIA_COVERED"> Groin (Covered)</label>
                 <label><input type="checkbox" value="BUTTOCKS_COVERED"> Buttocks (Covered)</label>
+                <label><input type="checkbox" value="ANUS_COVERED"> Anus (Covered)</label>
                 <label><input type="checkbox" value="MALE_BREAST_EXPOSED"> Chest (Male)</label>
                 <label><input type="checkbox" value="BELLY_EXPOSED"> Belly (Exposed)</label>
-                <label><input type="checkbox" value="ARMPITS_EXPOSED"> Armpits</label>
-                <label><input type="checkbox" value="FEET_EXPOSED"> Feet</label>
+                <label><input type="checkbox" value="BELLY_COVERED"> Belly (Covered)</label>
+                <label><input type="checkbox" value="ARMPITS_EXPOSED"> Armpits (Exposed)</label>
+                <label><input type="checkbox" value="ARMPITS_COVERED"> Armpits (Covered)</label>
+                <label><input type="checkbox" value="FEET_EXPOSED"> Feet (Exposed)</label>
+                <label><input type="checkbox" value="FEET_COVERED"> Feet (Covered)</label>
               </div>
               <label style="display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; color: var(--accent-cyan); cursor: pointer;">
                 <input type="checkbox" id="checkNsfwExcludeFaces" checked> Exclude Faces from NSFW scan

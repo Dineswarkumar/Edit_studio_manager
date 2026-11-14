@@ -358,6 +358,44 @@ def test_api_null_eraser_and_large_brush_radius():
         client.delete(f"/api/media/{fid}")
 
 
+def test_api_nsfw_all_classes_and_ignores_eyes_region():
+    from engine.censor_processor import NUDENET_FACE_CLASSES, NUDENET_LABELS
+    with open("static/censor.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    body_classes = [c for c in NUDENET_LABELS if c not in NUDENET_FACE_CLASSES]
+    for cls in body_classes:
+        assert f'value="{cls}"' in html, f"Missing NudeNet class checkbox in censor.html: {cls}"
+
+    img_path = os.path.join(TEST_DIR, "test_nsfw_full_region.jpg")
+    checker = np.zeros((240, 240, 3), dtype=np.uint8)
+    for y in range(0, 240, 10):
+        for x in range(0, 240, 10):
+            if ((x // 10) + (y // 10)) % 2 == 0:
+                checker[y:y + 10, x:x + 10] = (235, 235, 235)
+    cv2.imwrite(img_path, checker)
+
+    with open(img_path, "rb") as f:
+        up = client.post("/api/upload-media", files={"files": ("test_nsfw_full_region.jpg", f, "image/jpeg")})
+    assert up.status_code == 200
+    fid = up.json()["media"][0]["id"]
+    try:
+        box = {"x": 40, "y": 40, "w": 160, "h": 160, "label": "NudeNet: Buttocks (Exposed)", "confidence": 0.9}
+        proc = client.post("/api/censor/process", json={
+            "file_id": fid,
+            "mode": "nsfw",
+            "boxes": [box],
+            "mask_config": {"mask_type": "redact", "shape": "rect", "mask_region": "eyes", "redact_text": ""}
+        })
+        assert proc.status_code == 200, proc.text
+        out_path = os.path.join("outputs", proc.json()["filename"])
+        assert os.path.isfile(out_path)
+        out_img = cv2.imread(out_path)
+        # Bottom region inside box should be dark redaction (~18,18,18), not bright checkerboard
+        assert float(out_img[150:190, 60:180].mean()) < 40.0
+    finally:
+        client.delete(f"/api/media/{fid}")
+
+
 if __name__ == "__main__":
     test_api_censor_image_flow()
     test_api_censor_video_flow()
@@ -366,6 +404,7 @@ if __name__ == "__main__":
     test_api_video_batch_and_error_isolation()
     test_api_lan_pin_auth_guard()
     test_api_null_eraser_and_large_brush_radius()
+    test_api_nsfw_all_classes_and_ignores_eyes_region()
     print("\n==============================================")
     print("ALL CENSOR API END-TO-END TESTS PASSED! 🚀")
     print("==============================================")

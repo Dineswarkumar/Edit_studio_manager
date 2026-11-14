@@ -271,6 +271,41 @@ def test_nudenet_detector_loaded_and_filtering():
     assert isinstance(via_proc, list) and "nudenet" in det_name.lower()
 
 
+def test_nsfw_mode_does_not_shrink_to_eyes():
+    from engine.censor_processor import apply_masks_to_frame
+    # Checkerboard image so blurring any pixel produces measurable change
+    img = np.zeros((240, 240, 3), dtype=np.uint8)
+    for y in range(0, 240, 8):
+        for x in range(0, 240, 8):
+            if ((x // 8) + (y // 8)) % 2 == 0:
+                img[y:y + 8, x:x + 8] = (230, 230, 230)
+
+    nsfw_box = BoundingBox(
+        x=40, y=40, w=160, h=160,
+        confidence=0.9,
+        label="NudeNet: Chest / Breast (Exposed)",
+        landmarks=[(90.0, 90.0), (150.0, 90.0)],
+    )
+    cfg = MaskConfig(mask_type="redact", shape="rect", mask_region="eyes", redact_text="")
+    masked = apply_masks_to_frame(img, [nsfw_box], cfg)
+    # Bottom half of NSFW box (y=150..190) MUST be redacted, proving it was NOT shrunk to eye band
+    bottom_diff = int(np.abs(masked[150:190, 60:180].astype(int) - img[150:190, 60:180].astype(int)).sum())
+    assert bottom_diff > 10000, f"NSFW box was shrunk instead of full-region masked (diff={bottom_diff})"
+
+    # Whereas a Face box with mask_region='eyes' MUST only mask the eye band and leave lower chin untouched
+    face_box = BoundingBox(
+        x=40, y=40, w=160, h=160,
+        confidence=0.9,
+        label="Face #1",
+        landmarks=[(90.0, 85.0), (150.0, 85.0)],
+    )
+    face_masked = apply_masks_to_frame(img, [face_box], cfg)
+    chin_diff = int(np.abs(face_masked[160:195, 60:180].astype(int) - img[160:195, 60:180].astype(int)).sum())
+    eye_diff = int(np.abs(face_masked[75:95, 80:160].astype(int) - img[75:95, 80:160].astype(int)).sum())
+    assert eye_diff > 5000, "Eyes-only mask did not mask eye band on Face box"
+    assert chin_diff == 0, f"Eyes-only mask leaked onto lower face chin (diff={chin_diff})"
+
+
 if __name__ == "__main__":
     test_safe_io()
     test_face_detector()
@@ -282,6 +317,7 @@ if __name__ == "__main__":
     test_five_shapes_and_exact_face_fit()
     test_brush_and_eraser_subtraction()
     test_nudenet_detector_loaded_and_filtering()
+    test_nsfw_mode_does_not_shrink_to_eyes()
     print("\n==============================================")
     print("ALL DIVERSIFIED CENSOR ENGINE TESTS PASSED! 🚀")
     print("==============================================")

@@ -1322,6 +1322,38 @@ def _apply_brush_stroke_mask(
     return img
 
 
+def _is_face_box_for_eyes(box: BoundingBox) -> bool:
+    """Return True only when `box` represents a face target eligible for Eyes-Only band shrinking."""
+    lbl = (box.label or "").strip()
+    if lbl.startswith(("NudeNet:", "NSFW", "Skin Region")):
+        return False
+    if lbl.startswith("Face #") or lbl in ("Face", "Custom Face"):
+        return True
+    return bool(
+        box.landmarks
+        and len(box.landmarks) >= 2
+        and not lbl.startswith(("License", "Document", "Logo", "Custom", "Manual", "Object"))
+    )
+
+
+def _force_full_region_config(config: MaskConfig) -> MaskConfig:
+    """Return a copy of `config` with mask_region forced to 'face' for non-face modes."""
+    if config.mask_region != "eyes":
+        return config
+    return MaskConfig(
+        mask_type=config.mask_type,
+        intensity=config.intensity,
+        feather=config.feather,
+        emoji_name=config.emoji_name,
+        custom_sticker_path=config.custom_sticker_path,
+        redact_text=config.redact_text,
+        shape=config.shape,
+        mask_region="face",
+        face_fit=config.face_fit,
+        padding_percent=config.padding_percent,
+    )
+
+
 def apply_masks_to_frame(
     img_bgr: np.ndarray,
     boxes: List[BoundingBox],
@@ -1335,22 +1367,26 @@ def apply_masks_to_frame(
             continue
 
         mask_box = box
-        if config.mask_region == "eyes" and (box.landmarks or box.label.startswith("Face #") or box.label == "Face"):
+        if config.mask_region == "eyes" and _is_face_box_for_eyes(box):
             # YuNet landmark order: left eye, right eye, nose, left mouth, right mouth.
             # Keep a small brow/bridge margin so the eyes stay covered while the rest
             # of the face remains visible. The proportional fallback supports manual
             # boxes and older saved edits that do not contain landmarks.
             if box.landmarks and len(box.landmarks) >= 2:
                 eye_a, eye_b = box.landmarks[0], box.landmarks[1]
-                eye_distance = math.hypot(eye_b[0] - eye_a[0], eye_b[1] - eye_a[1])
+                dx = abs(eye_b[0] - eye_a[0])
+                dy = abs(eye_b[1] - eye_a[1])
+                eye_distance = math.hypot(dx, dy)
                 center_x = (eye_a[0] + eye_b[0]) / 2.0
                 center_y = (eye_a[1] + eye_b[1]) / 2.0
-                # YuNet's eye landmarks rotate with the face. Build an axis
-                # aligned safety band around both eye points instead of a narrow
-                # horizontal strip centered on their average; the latter leaks
-                # at the corners on tilted faces.
-                eye_w = max(8, int(eye_distance * 1.55))
-                eye_h = max(8, int(eye_distance * 0.90))
+                # YuNet's eye landmarks rotate with the face; orient the band
+                # vertically when the face is sideways (90/270 deg) so both eyes stay covered.
+                if dy > dx:
+                    eye_w = max(8, int(eye_distance * 0.90))
+                    eye_h = max(8, int(eye_distance * 1.55))
+                else:
+                    eye_w = max(8, int(eye_distance * 1.55))
+                    eye_h = max(8, int(eye_distance * 0.90))
                 eye_x = int(center_x - eye_w / 2)
                 eye_y = int(center_y - eye_h / 2)
             else:
@@ -1494,7 +1530,8 @@ class CensorProcessor:
         if not boxes:
             raise ValueError("No targets were detected or selected to mask.")
 
-        result_bgr = apply_masks_to_frame(img, boxes, mask_config)
+        effective_config = _force_full_region_config(mask_config) if (auto_detect_nsfw and not auto_detect_all) else mask_config
+        result_bgr = apply_masks_to_frame(img, boxes, effective_config)
         if not safe_imwrite(output_path, result_bgr):
             raise ValueError(f"Could not write protected image: {output_path}")
         return output_path
@@ -1630,6 +1667,7 @@ class CensorProcessor:
         pending_excluded_boxes: List[BoundingBox] = list(excluded_face_boxes or [])
         frame_idx = 0
         masked_frame_count = 0
+        effective_mask_config = _force_full_region_config(mask_config) if mode in ("nsfw", "specific_object") else mask_config
 
         try:
             while True:
@@ -1758,7 +1796,7 @@ class CensorProcessor:
                 if custom_brush_items:
                     active_frame_boxes.extend([b for b in custom_brush_items if _is_box_active_at(b, current_sec)])
 
-                masked_frame = apply_masks_to_frame(frame, active_frame_boxes, mask_config)
+                masked_frame = apply_masks_to_frame(frame, active_frame_boxes, effective_mask_config)
                 if encoder.poll() is not None:
                     error = encoder.stderr.read().decode("utf-8", errors="replace") if encoder.stderr else ""
                     raise ValueError(f"Video encoding stopped early: {error[-1200:]}")

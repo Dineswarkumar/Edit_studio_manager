@@ -72,6 +72,8 @@
   function initStudio() {
     initElements();
     initEventListeners();
+    updateProtectionModeUI();
+    updateMaskStylePanels();
     loadEmojiPack();
     fetchCapabilities();
     initCanvasDrawing();
@@ -158,6 +160,8 @@
     el.nsfwDetectorBadge = document.getElementById("nsfwDetectorBadge");
     el.nsfwDetectorNote = document.getElementById("nsfwDetectorNote");
     el.nsfwPartsCheckboxes = document.getElementById("nsfwPartsCheckboxes");
+    el.btnNsfwSelectDefaults = document.getElementById("btnNsfwSelectDefaults");
+    el.btnNsfwSelectAll = document.getElementById("btnNsfwSelectAll");
     el.checkNsfwExcludeFaces = document.getElementById("checkNsfwExcludeFaces");
     el.btnNsfwLow = document.getElementById("btnNsfwLow");
     el.btnNsfwBalanced = document.getElementById("btnNsfwBalanced");
@@ -195,6 +199,7 @@
     el.btnShapeCircle = document.getElementById("btnShapeCircle");
     el.btnShapeTriangle = document.getElementById("btnShapeTriangle");
     el.btnShapeHeart = document.getElementById("btnShapeHeart");
+    el.groupMaskRegion = document.getElementById("groupMaskRegion");
     el.btnRegionFace = document.getElementById("btnRegionFace");
     el.btnRegionEyes = document.getElementById("btnRegionEyes");
     el.groupIntensity = document.getElementById("groupIntensity");
@@ -700,6 +705,31 @@
         scheduleHistoryRecord();
       });
     }
+    const defaultNsfwSet = new Set([
+      "FEMALE_GENITALIA_EXPOSED",
+      "MALE_GENITALIA_EXPOSED",
+      "FEMALE_BREAST_EXPOSED",
+      "BUTTOCKS_EXPOSED",
+      "ANUS_EXPOSED"
+    ]);
+    if (el.btnNsfwSelectDefaults && el.nsfwPartsCheckboxes) {
+      el.btnNsfwSelectDefaults.addEventListener("click", () => {
+        el.nsfwPartsCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          cb.checked = defaultNsfwSet.has(cb.value);
+        });
+        updateNsfwClassesFromDom();
+        scheduleHistoryRecord();
+      });
+    }
+    if (el.btnNsfwSelectAll && el.nsfwPartsCheckboxes) {
+      el.btnNsfwSelectAll.addEventListener("click", () => {
+        el.nsfwPartsCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          cb.checked = true;
+        });
+        updateNsfwClassesFromDom();
+        scheduleHistoryRecord();
+      });
+    }
     if (el.checkNsfwExcludeFaces) {
       state.nsfwExcludeFaces = el.checkNsfwExcludeFaces.checked;
       el.checkNsfwExcludeFaces.addEventListener("change", (e) => {
@@ -910,10 +940,26 @@
     }
   }
 
+  function getEffectiveMaskConfig() {
+    return Object.assign({}, state.maskConfig, {
+      mask_region: state.protectionMode === "faces" ? (state.maskConfig.mask_region || "face") : "face"
+    });
+  }
+
   function updateProtectionModeUI() {
     el.panelFaceMode.style.display = (state.protectionMode === "faces") ? "flex" : "none";
     el.panelNsfwMode.style.display = (state.protectionMode === "nsfw") ? "flex" : "none";
     el.panelObjectMode.style.display = (state.protectionMode === "objects") ? "flex" : "none";
+
+    const isFacesMode = state.protectionMode === "faces";
+    if (!isFacesMode && state.maskConfig.mask_region !== "face") {
+      state.maskConfig.mask_region = "face";
+      if (el.btnRegionFace) el.btnRegionFace.classList.add("active");
+      if (el.btnRegionEyes) el.btnRegionEyes.classList.remove("active");
+    }
+    if (el.groupMaskRegion) {
+      el.groupMaskRegion.style.display = isFacesMode ? "block" : "none";
+    }
 
     if (state.protectionMode === "faces") {
       el.censorHintText.textContent = "💡 Tip: Use Exact Visible for tight face contour masks, or Single Person Focus to mask only one person.";
@@ -1301,7 +1347,7 @@
           file_id: state.activeMedia.id,
           frame_sec: state.scrubberSec,
           boxes: [],
-          mask_config: state.maskConfig,
+          mask_config: getEffectiveMaskConfig(),
           preview_revision: 0,
           session_id: window.STUDIO_TAB_SESSION_ID || null
         })
@@ -1388,6 +1434,7 @@
       setMaskRegion("face");
       setProtectionModeTab("faces");
     } else if (preset === "nsfw") {
+      setMaskRegion("face");
       setProtectionModeTab("nsfw");
     }
 
@@ -1788,7 +1835,7 @@
       return String(target.id).startsWith("face_") || target.label.startsWith("Face") || target.label.startsWith("Custom Face");
     }
     if (state.protectionMode === "nsfw") {
-      return String(target.id).startsWith("nsfw_") || target.label.startsWith("Skin Region") || target.label.startsWith("NSFW");
+      return String(target.id).startsWith("nsfw_") || target.label.startsWith("Skin Region") || target.label.startsWith("NSFW") || target.label.startsWith("NudeNet");
     }
     return target.label.startsWith(state.selectedObjectTag || "License Plate");
   }
@@ -2394,7 +2441,7 @@
 
         let strokeColor = "#00f0ff";
         if (t.kind === "brush") strokeColor = "#38bdf8";
-        else if (t.label.startsWith("NSFW") || t.label.startsWith("Skin Region") || t.label.startsWith("EXPOSED") || t.label.includes("BREAST") || t.label.includes("GENITALIA") || t.label.includes("BUTTOCKS")) strokeColor = "#ff2b54";
+        else if (t.label.startsWith("NudeNet") || t.label.startsWith("NSFW") || t.label.startsWith("Skin Region") || t.label.startsWith("EXPOSED") || t.label.includes("BREAST") || t.label.includes("GENITALIA") || t.label.includes("BUTTOCKS")) strokeColor = "#ff2b54";
         else if (t.label.startsWith("License") || t.label.startsWith("Document") || t.label.startsWith("Logo")) strokeColor = "#b026ff";
         else if (isFocused) strokeColor = "#00ff88";
 
@@ -2485,7 +2532,7 @@
           file_id: state.activeMedia.id,
           frame_sec: state.scrubberSec,
           boxes: activeBoxes,
-          mask_config: state.maskConfig,
+          mask_config: getEffectiveMaskConfig(),
           preview_revision: requestId,
           session_id: window.STUDIO_TAB_SESSION_ID || null
         })
@@ -2556,7 +2603,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: itemsPayload,
-          mask_config: state.maskConfig,
+          mask_config: getEffectiveMaskConfig(),
           nsfw_sensitivity: state.nsfwSensitivity,
           nsfw_classes: state.nsfwClasses,
           session_id: window.STUDIO_TAB_SESSION_ID || null
@@ -2638,7 +2685,7 @@
         boxes,
         auto_detect_faces: state.protectionMode === "faces",
         auto_detect_nsfw: state.protectionMode === "nsfw",
-        mask_config: state.maskConfig
+        mask_config: getEffectiveMaskConfig()
       };
     });
 
@@ -2649,7 +2696,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: itemsPayload,
-          mask_config: state.maskConfig,
+          mask_config: getEffectiveMaskConfig(),
           nsfw_sensitivity: state.nsfwSensitivity,
           nsfw_classes: state.nsfwClasses,
           session_id: window.STUDIO_TAB_SESSION_ID || null
@@ -2770,7 +2817,7 @@
           track_custom_objects: el.checkTrackCustomObject ? el.checkTrackCustomObject.checked : true,
           boxes: activeBoxes,
           excluded_face_boxes: excludedFaceBoxes,
-          mask_config: state.maskConfig,
+          mask_config: getEffectiveMaskConfig(),
           nsfw_sensitivity: state.nsfwSensitivity,
           nsfw_classes: state.nsfwClasses,
           session_id: window.STUDIO_TAB_SESSION_ID || null
