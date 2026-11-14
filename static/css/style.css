@@ -3633,18 +3633,30 @@ input[type="range"] { accent-color: var(--primary); }
     display: none;
   }
   .color-header .header-actions {
-    display: grid;
-    grid-template-columns: 31px minmax(0, 1fr) max-content max-content;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 6px;
+    width: 100%;
+  }
+  .color-header .theme-toggle-btn {
+    margin-right: auto;
   }
   .color-header .workspace-layouts {
+    order: 4;
+    flex: 1 0 100%;
     width: 100%;
     min-width: 0;
   }
   .color-header .color-reset-btn {
-    padding: 7px 8px;
-    font-size: 10px;
+    padding: 7px 10px;
+    font-size: 11px;
+  }
+  .color-header #btnProcessColorBatch {
+    margin-left: 0;
+    padding: 7px 11px;
+    font-size: 11px;
   }
   .color-compare-wrap img {
     max-height: 44vh;

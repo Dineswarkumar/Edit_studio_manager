@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Privacy | Frame Studio</title>
-  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-22">
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-23">
   <script src="/js/theme.js?v=studio-redesign-19"></script>
   <script src="/js/vendor/jszip.min.js"></script>
   <script src="/js/mobile-engine.js"></script>
@@ -163,37 +163,14 @@
           <div class="dropzone-hint" id="censorDropzoneHint">Brush/box blur custom areas, detect faces, or NudeNet body privacy</div>
         </div>
 
-        <!-- Loaded media details -->
-        <div id="mediaDetailsPanel" style="display: none; flex-direction: column; gap: 14px;">
-          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;">
-            <span id="mediaNameLabel" style="font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;"></span>
-            <span id="mediaDimensionsBadge" style="font-size: 11px; color: var(--accent-emerald);"></span>
-          </div>
-
-          <!-- Batch Image OR Video Queue & Multi-File Presets -->
-          <div id="censorBatchPanel" class="censor-batch-panel" style="display: none;">
-            <div class="censor-batch-header">
-              <span id="censorBatchCount" style="font-size: 12px; font-weight: 600;">1 item loaded</span>
-              <div style="display: flex; gap: 6px;">
-                <button class="btn-secondary" id="btnBatchSelectAll" type="button" style="padding: 4px 8px; font-size: 11px;">All</button>
-                <button class="btn-secondary" id="btnAddMoreMedia" type="button" style="padding: 4px 8px; font-size: 11px;">+ Add</button>
-              </div>
-            </div>
-            <div id="censorBatchList" class="censor-batch-list"></div>
-            <div id="batchQuickActions" class="censor-batch-actions">
-              <button class="btn-secondary" id="btnBatchApplyFaces" type="button" title="Detect and mask faces across all selected items">Face Blur (All)</button>
-              <button class="btn-secondary" id="btnBatchApplyEyes" type="button" title="Detect and mask eyes across all selected items">Eyes Blur (All)</button>
-              <button class="btn-secondary" id="btnBatchApplyNsfw" type="button" title="Scan body-part regions across all selected items">NSFW (All)</button>
-            </div>
-          </div>
-
-          <!-- DIVERSIFIED PROTECTION MODES -->
+        <!-- DIVERSIFIED PROTECTION MODES (Always visible so users can configure mode & body parts before/after upload) -->
+        <div id="protectionTaskSection" style="display: flex; flex-direction: column; gap: 10px;">
           <div>
             <label class="control-label" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Choose Protection Task</label>
             <div class="segmented-control" id="protectionModeSegments" style="margin-top: 4px;">
-              <button class="segment-btn active" data-mode="faces">👤 Faces</button>
-              <button class="segment-btn" data-mode="nsfw">🔞 Body / NSFW</button>
-              <button class="segment-btn" data-mode="objects">🎯 Objects</button>
+              <button class="segment-btn protection-mode-btn active" data-mode="faces">👤 Faces</button>
+              <button class="segment-btn protection-mode-btn" data-mode="nsfw">🔞 Body / NSFW</button>
+              <button class="segment-btn protection-mode-btn" data-mode="objects">🎯 Objects</button>
             </div>
           </div>
 
@@ -230,7 +207,7 @@
               🎯 <strong>Single Person Focus</strong>: Click a face below or on canvas to track and mask ONLY that individual.
             </p>
 
-            <button class="btn-primary" id="btnAutoDetectFaces" style="padding: 8px 12px; font-size: 12px; width: 100%;">
+            <button class="btn-primary" id="btnAutoDetectFaces" style="padding: 8px 12px; font-size: 12px; width: 100%;" disabled>
               🔍 Auto-Detect Faces (YuNet)
             </button>
           </div>
@@ -280,7 +257,7 @@
               <button class="segment-btn" id="btnNsfwHigh" data-sens="0.8">Strict</button>
             </div>
 
-            <button class="btn-primary" id="btnScanNsfw" style="padding: 8px 12px; font-size: 12px; width: 100%;">
+            <button class="btn-primary" id="btnScanNsfw" style="padding: 8px 12px; font-size: 12px; width: 100%;" disabled>
               🛡️ Scan Sensitive Body Parts
             </button>
           </div>
@@ -301,7 +278,7 @@
               <button class="segment-btn" data-tag="Custom Object">📦 Other</button>
             </div>
 
-            <button class="btn-primary" id="btnAddManualBox" style="padding: 8px 12px; font-size: 12px; width: 100%;">
+            <button class="btn-primary" id="btnAddManualBox" style="padding: 8px 12px; font-size: 12px; width: 100%;" disabled>
               🎯 Draw Object Box on Canvas
             </button>
 
@@ -309,6 +286,31 @@
               <input type="checkbox" id="checkTrackCustomObject" checked>
               Motion-track this object across video frames
             </label>
+          </div>
+        </div>
+
+        <!-- Loaded media details -->
+        <div id="mediaDetailsPanel" style="display: none; flex-direction: column; gap: 14px;">
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;">
+            <span id="mediaNameLabel" style="font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;"></span>
+            <span id="mediaDimensionsBadge" style="font-size: 11px; color: var(--accent-emerald);"></span>
+          </div>
+
+          <!-- Batch Image OR Video Queue & Multi-File Presets -->
+          <div id="censorBatchPanel" class="censor-batch-panel" style="display: none;">
+            <div class="censor-batch-header">
+              <span id="censorBatchCount" style="font-size: 12px; font-weight: 600;">1 item loaded</span>
+              <div style="display: flex; gap: 6px;">
+                <button class="btn-secondary" id="btnBatchSelectAll" type="button" style="padding: 4px 8px; font-size: 11px;">All</button>
+                <button class="btn-secondary" id="btnAddMoreMedia" type="button" style="padding: 4px 8px; font-size: 11px;">+ Add</button>
+              </div>
+            </div>
+            <div id="censorBatchList" class="censor-batch-list"></div>
+            <div id="batchQuickActions" class="censor-batch-actions">
+              <button class="btn-secondary" id="btnBatchApplyFaces" type="button" title="Detect and mask faces across all selected items">Face Blur (All)</button>
+              <button class="btn-secondary" id="btnBatchApplyEyes" type="button" title="Detect and mask eyes across all selected items">Eyes Blur (All)</button>
+              <button class="btn-secondary" id="btnBatchApplyNsfw" type="button" title="Scan body-part regions across all selected items">NSFW (All)</button>
+            </div>
           </div>
 
           <!-- Video Scrubber (Visible for videos) -->
@@ -565,7 +567,7 @@
     </div>
   </div>
 
-  <script src="/js/censor.js?v=studio-redesign-20"></script>
+  <script src="/js/censor.js?v=studio-redesign-22"></script>
   <script src="/js/workspace.js?v=studio-redesign-20"></script>
 </body>
 </html>

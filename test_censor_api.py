@@ -360,8 +360,15 @@ def test_api_null_eraser_and_large_brush_radius():
 
 def test_api_nsfw_all_classes_and_ignores_eyes_region():
     from engine.censor_processor import NUDENET_FACE_CLASSES, NUDENET_LABELS
-    with open("static/censor.html", "r", encoding="utf-8") as f:
-        html = f.read()
+    page = client.get("/censor.html")
+    assert page.status_code == 200
+    html = page.text
+    assert 'src="/censor.js"' not in html
+    assert 'src="/js/censor.js' in html
+    for needle in ('id="protectionTaskSection"', 'id="protectionModeSegments"', 'protection-mode-btn', 'id="panelNsfwMode"', 'id="nsfwPartsCheckboxes"'):
+        assert needle in html, f"Missing expected UI element {needle} in served /censor.html"
+    # Mode switcher must sit outside hidden mediaDetailsPanel so it is visible on initial page load
+    assert html.index('id="protectionTaskSection"') < html.index('id="mediaDetailsPanel"')
     body_classes = [c for c in NUDENET_LABELS if c not in NUDENET_FACE_CLASSES]
     for cls in body_classes:
         assert f'value="{cls}"' in html, f"Missing NudeNet class checkbox in censor.html: {cls}"
