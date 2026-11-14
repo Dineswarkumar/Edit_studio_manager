@@ -17,10 +17,42 @@ import numpy as np
 import cv2
 import threading
 
-# Path to local YuNet ONNX model
+# Path to local YuNet & NudeNet ONNX models
 MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
 YUNET_PATH = os.path.join(MODEL_DIR, "face_detection_yunet_2023mar.onnx")
+NUDENET_PATH = os.path.join(MODEL_DIR, "320n.onnx")
 EMOJI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "assets", "emojis")
+
+NUDENET_LABELS: Tuple[str, ...] = (
+    "FEMALE_GENITALIA_COVERED",
+    "FACE_FEMALE",
+    "BUTTOCKS_EXPOSED",
+    "FEMALE_BREAST_EXPOSED",
+    "FEMALE_GENITALIA_EXPOSED",
+    "MALE_BREAST_EXPOSED",
+    "ANUS_EXPOSED",
+    "FEET_EXPOSED",
+    "BELLY_COVERED",
+    "FEET_COVERED",
+    "ARMPITS_COVERED",
+    "ARMPITS_EXPOSED",
+    "FACE_MALE",
+    "BELLY_EXPOSED",
+    "MALE_GENITALIA_EXPOSED",
+    "ANUS_COVERED",
+    "FEMALE_BREAST_COVERED",
+    "BUTTOCKS_COVERED",
+)
+
+DEFAULT_NSFW_CLASSES: Tuple[str, ...] = (
+    "FEMALE_GENITALIA_EXPOSED",
+    "MALE_GENITALIA_EXPOSED",
+    "FEMALE_BREAST_EXPOSED",
+    "BUTTOCKS_EXPOSED",
+    "ANUS_EXPOSED",
+)
+
+NUDENET_FACE_CLASSES: Set[str] = {"FACE_FEMALE", "FACE_MALE"}
 
 
 def safe_imread(path: str) -> Optional[np.ndarray]:
@@ -66,7 +98,11 @@ class BoundingBox:
     kind: str = "box"
     brush_points: Optional[List[Tuple[float, float]]] = None
     brush_radius: float = 24.0
+    eraser_points: Optional[List[Tuple[float, float]]] = None
+    eraser_radius: float = 24.0
     mask_type: Optional[str] = None
+    start_sec: Optional[float] = None
+    end_sec: Optional[float] = None
 
     @property
     def x2(self) -> int:
@@ -93,15 +129,22 @@ class BoundingBox:
             "confidence": round(float(self.confidence), 3),
             "track_id": self.track_id,
             "label": self.label,
-            "landmarks": [[round(float(x), 2), round(float(y), 2)] for x, y in (self.landmarks or [])]
+            "landmarks": [[round(float(x), 2), round(float(y), 2)] for x, y in (self.landmarks or [])],
         }
         if self.kind != "box":
             data["kind"] = self.kind
         if self.brush_points:
             data["brush_points"] = [[round(float(px), 2), round(float(py), 2)] for px, py in self.brush_points]
             data["brush_radius"] = round(float(self.brush_radius), 2)
+        if self.eraser_points:
+            data["eraser_points"] = [[round(float(px), 2), round(float(py), 2)] for px, py in self.eraser_points]
+            data["eraser_radius"] = round(float(self.eraser_radius), 2)
         if self.mask_type:
             data["mask_type"] = self.mask_type
+        if self.start_sec is not None:
+            data["start_sec"] = round(float(self.start_sec), 3)
+        if self.end_sec is not None:
+            data["end_sec"] = round(float(self.end_sec), 3)
         return data
 
 
@@ -109,12 +152,14 @@ class BoundingBox:
 class MaskConfig:
     mask_type: Literal["blur", "pixelate", "emoji", "redact"] = "blur"
     intensity: int = 50                 # 1 to 100
-    emoji_name: str = "sunglasses"      # sunglasses, smiley, clown, censored, poop
+    feather: int = 25                   # 0 to 100
+    emoji_name: str = "sunglasses"
     custom_sticker_path: Optional[str] = None
     redact_text: Optional[str] = "[CENSORED]"
-    shape: Literal["oval", "rect"] = "oval"
+    shape: Literal["oval", "rect", "circle", "triangle", "heart"] = "oval"
     mask_region: Literal["face", "eyes"] = "face"
-    padding_percent: float = 0.20       # 20% extra padding around detected face
+    face_fit: Literal["exact", "standard", "loose"] = "standard"
+    padding_percent: float = 0.20       # -0.10 to +0.35
 
 
 def compute_iou(box1: BoundingBox, box2: BoundingBox) -> float:
@@ -186,10 +231,16 @@ class FaceDetector:
             5000
         )
 
-    def detect(self, img_bgr: np.ndarray, padding_percent: float = 0.0) -> List[BoundingBox]:
+    def detect(
+        self,
+        img_bgr: np.ndarray,
+        padding_percent: float = 0.0,
+        face_fit: str = "standard",
+    ) -> List[BoundingBox]:
         """
         Detects faces in a BGR image using OpenCV YuNet, filtering out body/torso
         false positives via geometry, landmark anatomy, and skin-continuity checks.
+        `face_fit="exact"` tightens onto only the visible facial area inside frame bounds.
         """
         if img_bgr is None or self._detector is None:
             return []
@@ -295,14 +346,41 @@ class FaceDetector:
                         if skin_in >= 0.72 and skin_below >= 0.88:
                             continue
 
-            if padding_percent > 0.0:
+            if face_fit == "exact":
+                # Fit tightly around visible face contour using YuNet eye/nose/mouth landmarks
+                lm_xs = [pt[0] for pt in landmarks]
+                lm_ys = [pt[1] for pt in landmarks]
+                lm_cx = 0.5 * (landmarks[0][0] + landmarks[1][0])
+                face_top = min(by + bh * 0.04, min(lm_ys) - bh * 0.24)
+                face_bot = max(by + bh * 0.92, max(lm_ys) + bh * 0.16)
+                half_w = max(bw * 0.44, abs(landmarks[1][0] - landmarks[0][0]) * 1.15)
+                tx1 = max(bx, lm_cx - half_w)
+                tx2 = min(bx + bw, lm_cx + half_w)
+                ty1 = max(by, face_top)
+                ty2 = min(by + bh, face_bot)
+                # Apply fine user adjustment if padding_percent != 0
+                adj = float(padding_percent) * 0.5
+                x1 = max(0, int(round(tx1 - bw * adj)))
+                y1 = max(0, int(round(ty1 - bh * adj)))
+                x2 = min(w, int(round(tx2 + bw * adj)))
+                y2 = min(h, int(round(ty2 + bh * adj)))
+            elif padding_percent != 0.0:
                 pad_w = int(bw * padding_percent)
                 pad_h = int(bh * padding_percent)
+                top_mult = 1.1 if pad_h >= 0 else 0.75
+                bot_mult = 0.5 if pad_h >= 0 else 0.75
                 x1 = max(0, int(bx - pad_w))
-                y1 = max(0, int(by - pad_h * 1.1))
+                y1 = max(0, int(by - pad_h * top_mult))
                 x2 = min(w, int(bx + bw + pad_w))
-                y2 = min(h, int(by + bh + pad_h * 0.5))
+                y2 = min(h, int(by + bh + pad_h * bot_mult))
             else:
+                x1 = max(0, int(bx))
+                y1 = max(0, int(by))
+                x2 = min(w, int(bx + bw))
+                y2 = min(h, int(by + bh))
+
+            # Ensure valid positive box inside frame bounds
+            if x2 - x1 < 8 or y2 - y1 < 8:
                 x1 = max(0, int(bx))
                 y1 = max(0, int(by))
                 x2 = min(w, int(bx + bw))
@@ -513,13 +591,199 @@ def detect_nsfw_candidates(
     return candidates
 
 
+_SHARED_NUDENET_DETECTOR: Optional["NudeNetDetector"] = None
+_SHARED_NUDENET_LOCK = threading.Lock()
+
+
+def _format_nudenet_label(raw_label: str) -> str:
+    pretty = {
+        "FEMALE_GENITALIA_EXPOSED": "Genitalia (Exposed)",
+        "MALE_GENITALIA_EXPOSED": "Male Genitalia (Exposed)",
+        "FEMALE_GENITALIA_COVERED": "Genitalia (Covered)",
+        "FEMALE_BREAST_EXPOSED": "Chest / Breast (Exposed)",
+        "MALE_BREAST_EXPOSED": "Male Chest (Exposed)",
+        "FEMALE_BREAST_COVERED": "Chest (Covered)",
+        "BUTTOCKS_EXPOSED": "Buttocks (Exposed)",
+        "BUTTOCKS_COVERED": "Buttocks (Covered)",
+        "ANUS_EXPOSED": "Anus (Exposed)",
+        "ANUS_COVERED": "Anus (Covered)",
+        "BELLY_EXPOSED": "Belly (Exposed)",
+        "BELLY_COVERED": "Belly (Covered)",
+        "ARMPITS_EXPOSED": "Armpits (Exposed)",
+        "ARMPITS_COVERED": "Armpits (Covered)",
+        "FEET_EXPOSED": "Feet (Exposed)",
+        "FEET_COVERED": "Feet (Covered)",
+    }
+    return f"NudeNet: {pretty.get(raw_label, raw_label.replace('_', ' ').title())}"
+
+
+class NudeNetDetector:
+    """
+    Accurate 18-class body-part privacy detector backed by NudeNet v3 ONNX (320n.onnx).
+    Always ignores FACE_FEMALE / FACE_MALE so body-part privacy does not duplicate face boxes.
+    """
+
+    def __init__(self, model_path: str = NUDENET_PATH, input_size: int = 320):
+        self.model_path = model_path
+        self.input_size = int(input_size)
+        self._session = None
+        self._input_name: Optional[str] = None
+        self._lock = threading.Lock()
+        self._load_attempted = False
+
+    @classmethod
+    def is_available(cls, model_path: str = NUDENET_PATH) -> bool:
+        if not os.path.isfile(model_path):
+            return False
+        try:
+            import onnxruntime  # noqa: F401
+            return True
+        except Exception:
+            return False
+
+    def _ensure_loaded(self) -> bool:
+        if self._session is not None:
+            return True
+        if self._load_attempted:
+            return False
+        with self._lock:
+            if self._session is not None:
+                return True
+            if self._load_attempted:
+                return False
+            self._load_attempted = True
+            if not os.path.isfile(self.model_path):
+                return False
+            try:
+                import onnxruntime as ort
+                self._session = ort.InferenceSession(self.model_path, providers=["CPUExecutionProvider"])
+                self._input_name = self._session.get_inputs()[0].name
+                return True
+            except Exception as exc:
+                print(f"WARNING: Could not load NudeNet ONNX ({self.model_path}): {exc}")
+                self._session = None
+                return False
+
+    def detect(
+        self,
+        img_bgr: np.ndarray,
+        sensitivity: float = 0.5,
+        allowed_classes: Optional[List[str]] = None,
+        face_boxes: Optional[List[BoundingBox]] = None,
+    ) -> List[BoundingBox]:
+        if img_bgr is None or not self._ensure_loaded() or self._session is None:
+            return []
+
+        h_orig, w_orig = img_bgr.shape[:2]
+        if h_orig < 8 or w_orig < 8:
+            return []
+
+        active_classes = set(allowed_classes) if allowed_classes is not None else set(DEFAULT_NSFW_CLASSES)
+        active_classes -= NUDENET_FACE_CLASSES
+        if not active_classes:
+            return []
+
+        # Sensitivity 0..1 maps inversely to confidence threshold (higher sensitivity = lower threshold)
+        sens = max(0.0, min(1.0, float(sensitivity)))
+        conf_threshold = max(0.16, min(0.62, 0.54 - sens * 0.34))
+
+        max_size = max(w_orig, h_orig)
+        x_pad = max_size - w_orig
+        y_pad = max_size - h_orig
+        mat_pad = cv2.copyMakeBorder(img_bgr, 0, y_pad, 0, x_pad, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        blob = cv2.dnn.blobFromImage(
+            mat_pad,
+            1.0 / 255.0,
+            (self.input_size, self.input_size),
+            (0, 0, 0),
+            swapRB=True,
+            crop=False,
+        )
+
+        with self._lock:
+            outputs = self._session.run(None, {self._input_name: blob})
+
+        preds = np.transpose(np.squeeze(outputs[0]))
+        scores_mat = preds[:, 4:]
+        class_ids = np.argmax(scores_mat, axis=1)
+        max_scores = scores_mat[np.arange(preds.shape[0]), class_ids]
+        keep_mask = max_scores >= conf_threshold
+        if not np.any(keep_mask):
+            return []
+
+        scale_x = (w_orig + x_pad) / float(self.input_size)
+        scale_y = (h_orig + y_pad) / float(self.input_size)
+        boxes_xywh: List[List[float]] = []
+        scores: List[float] = []
+        kept_labels: List[str] = []
+
+        for row, cid, score in zip(preds[keep_mask], class_ids[keep_mask], max_scores[keep_mask]):
+            cls_name = NUDENET_LABELS[int(cid)]
+            if cls_name not in active_classes:
+                continue
+            cx, cy, bw, bh = float(row[0]), float(row[1]), float(row[2]), float(row[3])
+            x = max(0.0, min((cx - bw * 0.5) * scale_x, float(w_orig)))
+            y = max(0.0, min((cy - bh * 0.5) * scale_y, float(h_orig)))
+            bw_scaled = min(bw * scale_x, float(w_orig) - x)
+            bh_scaled = min(bh * scale_y, float(h_orig) - y)
+            if bw_scaled < 8 or bh_scaled < 8:
+                continue
+            boxes_xywh.append([x, y, bw_scaled, bh_scaled])
+            scores.append(float(score))
+            kept_labels.append(cls_name)
+
+        if not boxes_xywh:
+            return []
+
+        indices = cv2.dnn.NMSBoxes(boxes_xywh, scores, conf_threshold, 0.45)
+        if len(indices) == 0:
+            return []
+
+        results: List[BoundingBox] = []
+        faces = face_boxes or []
+        for idx in np.array(indices).flatten():
+            x, y, bw_s, bh_s = boxes_xywh[int(idx)]
+            pad = max(3, int(min(bw_s, bh_s) * 0.08))
+            bx1 = max(0, int(x) - pad)
+            by1 = max(0, int(y) - pad)
+            bx2 = min(w_orig, int(x + bw_s) + pad)
+            by2 = min(h_orig, int(y + bh_s) + pad)
+            box = BoundingBox(
+                x=bx1,
+                y=by1,
+                w=max(4, bx2 - bx1),
+                h=max(4, by2 - by1),
+                confidence=round(scores[int(idx)], 3),
+                label=_format_nudenet_label(kept_labels[int(idx)]),
+            )
+            clipped = _clip_box_away_from_faces(box, faces) if faces else box
+            if clipped is not None:
+                results.append(clipped)
+        return results
+
+
+def _get_shared_nudenet_detector() -> NudeNetDetector:
+    global _SHARED_NUDENET_DETECTOR
+    with _SHARED_NUDENET_LOCK:
+        if _SHARED_NUDENET_DETECTOR is None:
+            _SHARED_NUDENET_DETECTOR = NudeNetDetector()
+        return _SHARED_NUDENET_DETECTOR
+
+
 class VideoFaceTracker:
     """Robust track-by-detection associator with confirmation hysteresis."""
 
-    def __init__(self, detector: FaceDetector, max_lost_frames: int = 8, padding_percent: float = 0.20):
+    def __init__(
+        self,
+        detector: FaceDetector,
+        max_lost_frames: int = 8,
+        padding_percent: float = 0.20,
+        face_fit: str = "standard",
+    ):
         self.detector = detector
         self.max_lost_frames = max_lost_frames
         self.padding_percent = padding_percent
+        self.face_fit = face_fit
         self.next_track_id = 1
         self.active_tracks: Dict[int, dict] = {}
         # Detect every frame. Reusing an unchanged box for two frames caused
@@ -535,7 +799,11 @@ class VideoFaceTracker:
                 if tinfo.get("confirmed", True)
             ]
 
-        detected_boxes = self.detector.detect(frame_bgr, padding_percent=self.padding_percent)
+        detected_boxes = self.detector.detect(
+            frame_bgr,
+            padding_percent=self.padding_percent,
+            face_fit=self.face_fit,
+        )
         self.last_detection_frame = frame_idx
         h, w = frame_bgr.shape[:2]
         diag = math.hypot(w, h)
@@ -628,22 +896,92 @@ class VideoFaceTracker:
 
 # --- Mask Application Engine ---
 
-def _build_feathered_oval_mask(w_roi: int, h_roi: int) -> np.ndarray:
-    """Create a smooth elliptical alpha mask that decays to zero inside the ROI bounds."""
-    mask_w, mask_h = max(32, min(160, w_roi)), max(24, min(160, h_roi))
+def _build_shape_mask(
+    w_roi: int,
+    h_roi: int,
+    shape: str = "oval",
+    feather: int = 25,
+) -> np.ndarray:
+    """
+    Create an alpha mask in [0, 1] for any supported censor shape:
+    'oval', 'rect', 'circle', 'triangle', or 'heart', with configurable edge feather.
+    """
+    mask_w, mask_h = max(32, min(192, w_roi)), max(24, min(192, h_roi))
     mask = np.zeros((mask_h, mask_w), dtype=np.float32)
-    # Keep the feather inside a narrow edge band. The old 0.38 radii left a
-    # large unmasked rim inside the detected target, which was especially
-    # visible on moving faces and the widened eyes-only region.
-    axes = (max(4, int(mask_w * 0.47)), max(4, int(mask_h * 0.47)))
-    cv2.ellipse(mask, (mask_w // 2, mask_h // 2), axes, 0, 0, 360, 1.0, -1)
-    ksize = max(5, (min(mask_w, mask_h) // 6) | 1)
-    mask = cv2.GaussianBlur(mask, (ksize, ksize), 0)
+
+    if shape == "rect":
+        pad_x = max(1, int(mask_w * 0.04)) if feather > 0 else 0
+        pad_y = max(1, int(mask_h * 0.04)) if feather > 0 else 0
+        cv2.rectangle(mask, (pad_x, pad_y), (max(pad_x + 2, mask_w - 1 - pad_x), max(pad_y + 2, mask_h - 1 - pad_y)), 1.0, -1)
+    elif shape == "circle":
+        radius = max(4, int(min(mask_w, mask_h) * 0.47))
+        cv2.circle(mask, (mask_w // 2, mask_h // 2), radius, 1.0, -1, lineType=cv2.LINE_AA)
+    elif shape == "triangle":
+        pts = np.array(
+            [
+                [mask_w // 2, max(2, int(mask_h * 0.04))],
+                [max(3, int(mask_w * 0.96)), max(3, int(mask_h * 0.95))],
+                [max(1, int(mask_w * 0.04)), max(3, int(mask_h * 0.95))],
+            ],
+            dtype=np.int32,
+        )
+        cv2.fillPoly(mask, [pts], 1.0, lineType=cv2.LINE_AA)
+    elif shape == "heart":
+        ts = np.linspace(0.0, 2.0 * math.pi, 120, endpoint=False)
+        xs = 16.0 * np.sin(ts) ** 3
+        ys = -(13.0 * np.cos(ts) - 5.0 * np.cos(2.0 * ts) - 2.0 * np.cos(3.0 * ts) - np.cos(4.0 * ts))
+        # Normalize parametric heart cleanly into (0..1) box
+        nx = (xs - xs.min()) / max(1e-6, xs.max() - xs.min())
+        ny = (ys - ys.min()) / max(1e-6, ys.max() - ys.min())
+        px = np.clip((0.05 + nx * 0.90) * (mask_w - 1), 0, mask_w - 1)
+        py = np.clip((0.06 + ny * 0.88) * (mask_h - 1), 0, mask_h - 1)
+        poly = np.stack([px, py], axis=1).astype(np.int32)
+        cv2.fillPoly(mask, [poly], 1.0, lineType=cv2.LINE_AA)
+    else:
+        axes = (max(4, int(mask_w * 0.47)), max(4, int(mask_h * 0.47)))
+        cv2.ellipse(mask, (mask_w // 2, mask_h // 2), axes, 0, 0, 360, 1.0, -1, lineType=cv2.LINE_AA)
+
+    f_norm = max(0.0, min(100.0, float(feather))) / 100.0
+    if f_norm > 0.02:
+        k_ratio = 0.04 + f_norm * 0.24
+        ksize = max(3, int(min(mask_w, mask_h) * k_ratio) | 1)
+        mask = cv2.GaussianBlur(mask, (ksize, ksize), 0)
+
     mask = cv2.resize(mask, (w_roi, h_roi), interpolation=cv2.INTER_LINEAR)
     return np.clip(mask, 0.0, 1.0)[:, :, np.newaxis]
 
 
-def apply_gaussian_blur(img: np.ndarray, box: BoundingBox, intensity: int, shape: str = "oval") -> np.ndarray:
+def _build_feathered_oval_mask(w_roi: int, h_roi: int) -> np.ndarray:
+    """Backwards-compatible alias for _build_shape_mask('oval', feather=25)."""
+    return _build_shape_mask(w_roi, h_roi, shape="oval", feather=25)
+
+
+def _compute_smooth_gaussian_blur(roi: np.ndarray, intensity: int) -> np.ndarray:
+    """True smooth separable Gaussian blur without blocky downscale/nearest-neighbor artifacts."""
+    h_roi, w_roi = roi.shape[:2]
+    strength = max(1, min(100, int(intensity))) / 100.0
+    min_side = min(w_roi, h_roi)
+    sigma = max(1.2, (0.04 + (strength ** 1.35) * 0.22) * min_side)
+
+    # For large ROIs, bilinear 0.5x + Gaussian + bilinear restore stays silky smooth AND 3-4x faster
+    if max(w_roi, h_roi) > 260 and sigma > 6.0:
+        half = cv2.resize(roi, (max(4, w_roi // 2), max(4, h_roi // 2)), interpolation=cv2.INTER_LINEAR)
+        k_half = max(3, int(round(sigma * 1.5)) | 1)
+        blurred_half = cv2.GaussianBlur(half, (k_half, k_half), sigmaX=sigma * 0.5, sigmaY=sigma * 0.5)
+        blurred = cv2.resize(blurred_half, (w_roi, h_roi), interpolation=cv2.INTER_LINEAR)
+        return cv2.GaussianBlur(blurred, (5, 5), sigmaX=1.2)
+
+    k = max(3, min(199, int(round(sigma * 3.0)) | 1))
+    return cv2.GaussianBlur(roi, (k, k), sigmaX=sigma, sigmaY=sigma)
+
+
+def apply_gaussian_blur(
+    img: np.ndarray,
+    box: BoundingBox,
+    intensity: int,
+    shape: str = "oval",
+    feather: int = 25,
+) -> np.ndarray:
     h_img, w_img = img.shape[:2]
     pad_x = int(box.w * 0.06)
     pad_y = int(box.h * 0.06)
@@ -654,26 +992,26 @@ def apply_gaussian_blur(img: np.ndarray, box: BoundingBox, intensity: int, shape
     if w_roi < 4 or h_roi < 4:
         return img
 
-    strength = max(1, min(100, int(intensity))) / 100.0
     roi = img[y1:y2, x1:x2]
-    keep_ratio = 0.015 + ((1.0 - strength) ** 1.6) * 0.14
-    small_w = max(4, int(w_roi * keep_ratio))
-    small_h = max(4, int(h_roi * keep_ratio))
-    small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_AREA)
-    small = cv2.GaussianBlur(small, (5, 5), 0)
-    blurred = cv2.resize(small, (w_roi, h_roi), interpolation=cv2.INTER_CUBIC)
+    blurred = _compute_smooth_gaussian_blur(roi, intensity)
 
-    if shape == "oval":
-        mask_3d = _build_feathered_oval_mask(w_roi, h_roi)
+    if shape == "rect" and feather <= 0:
+        img[y1:y2, x1:x2] = blurred
+    else:
+        mask_3d = _build_shape_mask(w_roi, h_roi, shape=shape, feather=feather)
         composite = (blurred * mask_3d + roi * (1.0 - mask_3d)).astype(np.uint8)
         img[y1:y2, x1:x2] = composite
-    else:
-        img[y1:y2, x1:x2] = blurred
 
     return img
 
 
-def apply_pixelate(img: np.ndarray, box: BoundingBox, intensity: int, shape: str = "oval") -> np.ndarray:
+def apply_pixelate(
+    img: np.ndarray,
+    box: BoundingBox,
+    intensity: int,
+    shape: str = "oval",
+    feather: int = 25,
+) -> np.ndarray:
     h_img, w_img = img.shape[:2]
     pad_x = int(box.w * 0.06)
     pad_y = int(box.h * 0.06)
@@ -694,11 +1032,11 @@ def apply_pixelate(img: np.ndarray, box: BoundingBox, intensity: int, shape: str
     small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_AREA)
     pixelated = cv2.resize(small, (w_roi, h_roi), interpolation=cv2.INTER_NEAREST)
 
-    if shape == "oval":
-        mask_3d = _build_feathered_oval_mask(w_roi, h_roi)
-        img[y1:y2, x1:x2] = (pixelated * mask_3d + roi * (1.0 - mask_3d)).astype(np.uint8)
-    else:
+    if shape == "rect" and feather <= 0:
         img[y1:y2, x1:x2] = pixelated
+    else:
+        mask_3d = _build_shape_mask(w_roi, h_roi, shape=shape, feather=max(0, min(35, feather)))
+        img[y1:y2, x1:x2] = (pixelated * mask_3d + roi * (1.0 - mask_3d)).astype(np.uint8)
 
     return img
 
@@ -782,7 +1120,8 @@ def apply_emoji_overlay(
 def apply_redact_bar(
     img: np.ndarray,
     box: BoundingBox,
-    text: Optional[str] = "[CENSORED]"
+    text: Optional[str] = "[CENSORED]",
+    shape: str = "rect",
 ) -> np.ndarray:
     h_img, w_img = img.shape[:2]
     x1, y1 = max(0, box.x), max(0, box.y)
@@ -791,26 +1130,65 @@ def apply_redact_bar(
     if x2 <= x1 or y2 <= y1:
         return img
 
-    cv2.rectangle(img, (x1, y1), (x2, y2), (18, 18, 18), -1)
-    cv2.rectangle(img, (x1, y1), (x2, y2), (220, 20, 60), 2)
+    w_roi, h_roi = x2 - x1, y2 - y1
+    roi = img[y1:y2, x1:x2]
+    patch = np.full_like(roi, (18, 18, 18))
+
+    if shape == "rect":
+        cv2.rectangle(patch, (0, 0), (w_roi - 1, h_roi - 1), (220, 20, 60), 2)
 
     if text:
         text_str = str(text).strip()
         font = cv2.FONT_HERSHEY_DUPLEX
-        bw = x2 - x1
-        bh = y2 - y1
-        base_scale = min(bw / 160.0, bh / 40.0)
+        base_scale = min(w_roi / 160.0, h_roi / 40.0)
         font_scale = max(0.4, min(1.2, base_scale))
         thickness = 1 if font_scale < 0.7 else 2
 
         (tw, th), _ = cv2.getTextSize(text_str, font, font_scale, thickness)
-        tx = x1 + (bw - tw) // 2
-        ty = y1 + (bh + th) // 2
+        tx = (w_roi - tw) // 2
+        ty = (h_roi + th) // 2
 
-        if tw < bw and th < bh:
-            cv2.putText(img, text_str, (tx, ty), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+        if tw < w_roi and th < h_roi:
+            cv2.putText(patch, text_str, (tx, ty), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+    if shape == "rect":
+        img[y1:y2, x1:x2] = patch
+    else:
+        mask_3d = _build_shape_mask(w_roi, h_roi, shape=shape, feather=4)
+        img[y1:y2, x1:x2] = (patch * mask_3d + roi * (1.0 - mask_3d)).astype(np.uint8)
 
     return img
+
+
+def _paint_polyline_on_mask(
+    mask: np.ndarray,
+    points: List[Tuple[float, float]],
+    radius: float,
+    origin_x: int,
+    origin_y: int,
+    value: float,
+) -> None:
+    thickness = max(2, int(round(radius * 2.0)))
+    r_int = max(2, int(round(radius)))
+    segments: List[List[Tuple[int, int]]] = []
+    current: List[Tuple[int, int]] = []
+    for px, py in points:
+        if px < 0 or py < 0:
+            if current:
+                segments.append(current)
+                current = []
+        else:
+            current.append((int(round(px - origin_x)), int(round(py - origin_y))))
+    if current:
+        segments.append(current)
+
+    for seg in segments:
+        if len(seg) == 1:
+            cv2.circle(mask, seg[0], r_int, value, -1, lineType=cv2.LINE_AA)
+        else:
+            for i in range(len(seg) - 1):
+                cv2.line(mask, seg[i], seg[i + 1], value, thickness=thickness, lineType=cv2.LINE_AA)
+            cv2.circle(mask, seg[-1], r_int, value, -1, lineType=cv2.LINE_AA)
 
 
 def _apply_brush_stroke_mask(
@@ -819,18 +1197,20 @@ def _apply_brush_stroke_mask(
     config: MaskConfig,
     effect_type: str,
 ) -> np.ndarray:
-    """Apply soft-feathered blur, pixelate, or solid redaction along a freehand polyline stroke."""
+    """Apply soft-feathered blur, pixelate, or solid redaction along a freehand stroke (with optional eraser subtract)."""
     points = box.brush_points or []
-    if not points:
+    valid_pts = [(float(p[0]), float(p[1])) for p in points if len(p) >= 2 and p[0] >= 0 and p[1] >= 0]
+    if not valid_pts:
         return img
 
     h_img, w_img = img.shape[:2]
     radius = max(4.0, float(box.brush_radius or 24.0))
-    feather_pad = max(4, int(round(radius * 0.35))) if config.shape == "oval" else 2
+    feather_val = max(0, min(100, int(getattr(config, "feather", 25))))
+    feather_pad = max(2, int(round(radius * (0.1 + 0.55 * (feather_val / 100.0)))))
     margin = int(math.ceil(radius)) + feather_pad
 
-    xs = [float(p[0]) for p in points]
-    ys = [float(p[1]) for p in points]
+    xs = [p[0] for p in valid_pts]
+    ys = [p[1] for p in valid_pts]
     x1 = max(0, int(math.floor(min(xs) - margin)))
     y1 = max(0, int(math.floor(min(ys) - margin)))
     x2 = min(w_img, int(math.ceil(max(xs) + margin)))
@@ -840,17 +1220,14 @@ def _apply_brush_stroke_mask(
         return img
 
     mask = np.zeros((h_roi, w_roi), dtype=np.float32)
-    thickness = max(2, int(round(radius * 2.0)))
-    rel_pts = [(int(round(px - x1)), int(round(py - y1))) for px, py in points]
-    if len(rel_pts) == 1:
-        cv2.circle(mask, rel_pts[0], max(2, int(round(radius))), 1.0, -1, lineType=cv2.LINE_AA)
-    else:
-        for i in range(len(rel_pts) - 1):
-            cv2.line(mask, rel_pts[i], rel_pts[i + 1], 1.0, thickness=thickness, lineType=cv2.LINE_AA)
-        cv2.circle(mask, rel_pts[-1], max(2, int(round(radius))), 1.0, -1, lineType=cv2.LINE_AA)
+    _paint_polyline_on_mask(mask, points, radius, x1, y1, 1.0)
+    if box.eraser_points:
+        e_rad = max(4.0, float(getattr(box, "eraser_radius", 24.0) or 24.0))
+        _paint_polyline_on_mask(mask, box.eraser_points, e_rad, x1, y1, 0.0)
 
-    if config.shape == "oval":
-        ksize = max(5, int(round(radius * 0.45)) | 1)
+    if feather_val > 0:
+        k_ratio = 0.08 + (feather_val / 100.0) * 0.65
+        ksize = max(3, int(round(radius * k_ratio)) | 1)
         mask = cv2.GaussianBlur(mask, (ksize, ksize), 0)
     alpha_3d = np.clip(mask, 0.0, 1.0)[:, :, np.newaxis]
 
@@ -866,12 +1243,7 @@ def _apply_brush_stroke_mask(
     elif effect_type == "redact":
         filtered = np.full_like(roi, (18, 18, 18))
     else:
-        keep_ratio = 0.015 + ((1.0 - strength) ** 1.6) * 0.14
-        small_w = max(4, int(w_roi * keep_ratio))
-        small_h = max(4, int(h_roi * keep_ratio))
-        small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_AREA)
-        small = cv2.GaussianBlur(small, (5, 5), 0)
-        filtered = cv2.resize(small, (w_roi, h_roi), interpolation=cv2.INTER_CUBIC)
+        filtered = _compute_smooth_gaussian_blur(roi, config.intensity)
 
     img[y1:y2, x1:x2] = (filtered * alpha_3d + roi * (1.0 - alpha_3d)).astype(np.uint8)
     return img
@@ -918,16 +1290,17 @@ def apply_masks_to_frame(
                 confidence=box.confidence, track_id=box.track_id,
                 label=box.label
             )
+        feather_val = int(getattr(config, "feather", 25))
         if effect_type == "blur":
-            output = apply_gaussian_blur(output, mask_box, config.intensity, config.shape)
+            output = apply_gaussian_blur(output, mask_box, config.intensity, config.shape, feather=feather_val)
         elif effect_type == "pixelate":
-            output = apply_pixelate(output, mask_box, config.intensity, config.shape)
+            output = apply_pixelate(output, mask_box, config.intensity, config.shape, feather=feather_val)
         elif effect_type == "emoji":
             output = apply_emoji_overlay(output, mask_box, config.emoji_name, config.custom_sticker_path)
         elif effect_type == "redact":
-            output = apply_redact_bar(output, mask_box, config.redact_text)
+            output = apply_redact_bar(output, mask_box, config.redact_text, shape=config.shape)
         else:
-            output = apply_gaussian_blur(output, mask_box, config.intensity, config.shape)
+            output = apply_gaussian_blur(output, mask_box, config.intensity, config.shape, feather=feather_val)
     return output
 
 
@@ -938,20 +1311,68 @@ class CensorProcessor:
 
     def __init__(self, model_path: str = YUNET_PATH):
         self.detector = FaceDetector(model_path=model_path)
+        self.nudenet = _get_shared_nudenet_detector()
 
-    def detect_image_faces(self, image_path: str, padding_percent: float = 0.20) -> List[BoundingBox]:
+    def detect_image_faces(
+        self,
+        image_path: str,
+        padding_percent: float = 0.20,
+        face_fit: str = "standard",
+    ) -> List[BoundingBox]:
         """Detects faces in a static image file."""
         img = safe_imread(image_path)
         if img is None:
             raise ValueError(f"Could not read image file: {image_path}")
-        return self.detector.detect(img, padding_percent=padding_percent)
+        return self.detector.detect(img, padding_percent=padding_percent, face_fit=face_fit)
 
-    def detect_image_nsfw(self, image_path: str, sensitivity: float = 0.5) -> List[BoundingBox]:
-        """Detects candidate NSFW/sensitive regions in an image."""
+    def detect_nsfw_frame(
+        self,
+        frame_bgr: np.ndarray,
+        sensitivity: float = 0.5,
+        face_boxes: Optional[List[BoundingBox]] = None,
+        allowed_classes: Optional[List[str]] = None,
+    ) -> Tuple[List[BoundingBox], str, str]:
+        """
+        Detect sensitive body parts using NudeNet v3 ONNX when loaded,
+        falling back to skin-region heuristics if the ONNX model is absent.
+        """
+        if self.nudenet._ensure_loaded():
+            boxes = self.nudenet.detect(
+                frame_bgr,
+                sensitivity=sensitivity,
+                allowed_classes=allowed_classes,
+                face_boxes=face_boxes,
+            )
+            return (
+                boxes,
+                "NudeNet v3 ONNX (18-class)",
+                "Local NudeNet ONNX detection complete. Review masks before export.",
+            )
+        boxes = detect_nsfw_candidates(frame_bgr, sensitivity=sensitivity, face_boxes=face_boxes)
+        return (
+            boxes,
+            "skin-region heuristic",
+            "Candidate regions only; review every result before export.",
+        )
+
+    def detect_image_nsfw(
+        self,
+        image_path: str,
+        sensitivity: float = 0.5,
+        allowed_classes: Optional[List[str]] = None,
+    ) -> List[BoundingBox]:
+        """Detects sensitive body-part regions in an image."""
         img = safe_imread(image_path)
         if img is None:
             raise ValueError(f"Could not read image file: {image_path}")
-        return detect_nsfw_candidates(img, sensitivity=sensitivity)
+        faces = self.detector.detect(img, padding_percent=0.05)
+        boxes, _, _ = self.detect_nsfw_frame(
+            img,
+            sensitivity=sensitivity,
+            face_boxes=faces,
+            allowed_classes=allowed_classes,
+        )
+        return boxes
 
     def process_image(
         self,
@@ -961,7 +1382,8 @@ class CensorProcessor:
         custom_boxes: Optional[List[BoundingBox]] = None,
         auto_detect_all: bool = False,
         auto_detect_nsfw: bool = False,
-        nsfw_sensitivity: float = 0.5
+        nsfw_sensitivity: float = 0.5,
+        nsfw_classes: Optional[List[str]] = None,
     ) -> str:
         """
         Applies privacy masking to an image safely.
@@ -975,9 +1397,22 @@ class CensorProcessor:
         if custom_boxes is not None and len(custom_boxes) > 0:
             boxes.extend(custom_boxes)
         if auto_detect_all:
-            boxes.extend(self.detector.detect(img, padding_percent=mask_config.padding_percent))
+            boxes.extend(
+                self.detector.detect(
+                    img,
+                    padding_percent=mask_config.padding_percent,
+                    face_fit=getattr(mask_config, "face_fit", "standard"),
+                )
+            )
         if auto_detect_nsfw:
-            boxes.extend(detect_nsfw_candidates(img, sensitivity=nsfw_sensitivity))
+            faces = self.detector.detect(img, padding_percent=0.05)
+            nsfw_boxes, _, _ = self.detect_nsfw_frame(
+                img,
+                sensitivity=nsfw_sensitivity,
+                face_boxes=faces,
+                allowed_classes=nsfw_classes,
+            )
+            boxes.extend(nsfw_boxes)
 
         if not boxes:
             raise ValueError("No targets were detected or selected to mask.")
@@ -1028,12 +1463,15 @@ class CensorProcessor:
         excluded_face_boxes: Optional[List[BoundingBox]] = None,
         track_custom_objects: bool = True,
         nsfw_sensitivity: float = 0.5,
+        nsfw_classes: Optional[List[str]] = None,
         progress_callback: Optional[Callable[[float], None]] = None
     ) -> str:
         """
         Diversified video censor with continuous face tracking, single-face focus,
-        or MIL object tracking for specific objects (license plates, custom boxes).
+        MIL object tracking, NudeNet ONNX body-part tracking, and time-ranged brush masks.
         """
+        from engine.hw_accel import detect_best_h264_encoder, build_h264_encode_args
+
         cap = cv2.VideoCapture(input_video_path)
         if not cap.isOpened():
             raise ValueError(f"Could not open video file: {input_video_path}")
@@ -1053,17 +1491,18 @@ class CensorProcessor:
             cap.release()
             raise ValueError("FFmpeg is required to export protected videos. Install FFmpeg and restart the app.")
 
-        # Encode masked frames once. The old path wrote every frame to an MP4V
-        # intermediate, then decoded and re-encoded the whole file with FFmpeg.
+        preferred_enc = detect_best_h264_encoder()
+        vf_filter = "pad=ceil(iw/2)*2:ceil(ih/2)*2" + (",format=nv12" if preferred_enc == "h264_qsv" else "")
+        codec_args = build_h264_encode_args(preferred_enc, crf=20, preset="ultrafast")
         ffmpeg_cmd = [
             ffmpeg, "-y", "-loglevel", "error",
             "-f", "rawvideo", "-pix_fmt", "bgr24",
             "-video_size", f"{width}x{height}", "-framerate", str(fps), "-i", "pipe:0",
             "-i", input_video_path,
             "-map", "0:v:0", "-map", "1:a?", "-map_metadata", "0",
-            "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            "-vf", vf_filter,
+            *codec_args,
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
             output_video_path
         ]
         encoder = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -1074,21 +1513,37 @@ class CensorProcessor:
         if progress_callback:
             progress_callback(2.0)
 
-        # Initialize object trackers if in specific_object mode
-        object_trackers: List[cv2.Tracker] = []
-        if mode == "specific_object" and track_custom_objects and custom_boxes:
+        all_custom = list(custom_boxes or [])
+        custom_box_items = [b for b in all_custom if b.kind != "brush"]
+        custom_brush_items = [b for b in all_custom if b.kind == "brush"]
+
+        def _is_box_active_at(box: BoundingBox, sec: float) -> bool:
+            if box.start_sec is not None and sec < box.start_sec:
+                return False
+            if box.end_sec is not None and sec > box.end_sec:
+                return False
+            return True
+
+        # Initialize object trackers only for rectangular/shape box targets when requested
+        object_trackers: List[Tuple[cv2.Tracker, BoundingBox]] = []
+        if mode == "specific_object" and track_custom_objects and custom_box_items:
             ret, first_frame = cap.read()
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             if ret and first_frame is not None:
-                for c_box in custom_boxes:
+                for c_box in custom_box_items:
                     tr = self._create_object_tracker()
                     if tr is None:
                         break
                     if tr.init(first_frame, (c_box.x, c_box.y, c_box.w, c_box.h)) is False:
                         continue
-                    object_trackers.append(tr)
+                    object_trackers.append((tr, c_box))
 
-        face_tracker = VideoFaceTracker(self.detector, max_lost_frames=8, padding_percent=mask_config.padding_percent)
+        face_tracker = VideoFaceTracker(
+            self.detector,
+            max_lost_frames=8,
+            padding_percent=mask_config.padding_percent,
+            face_fit=getattr(mask_config, "face_fit", "standard"),
+        )
         nsfw_face_tracker = VideoFaceTracker(self.detector, max_lost_frames=8, padding_percent=0.10) if mode == "nsfw" else None
         nsfw_tracks: Dict[int, dict] = {}
         nsfw_next_id = 1
@@ -1105,6 +1560,7 @@ class CensorProcessor:
                 if not ret:
                     break
 
+                current_sec = frame_idx / float(max(1.0, fps))
                 active_frame_boxes: List[BoundingBox] = []
 
                 if mode in ["faces_all", "face_single"]:
@@ -1137,26 +1593,28 @@ class CensorProcessor:
 
                 elif mode == "specific_object":
                     if object_trackers:
-                        for tr in object_trackers:
+                        for tr, src_box in object_trackers:
                             ok, bbox = tr.update(frame)
-                            if ok:
+                            if ok and _is_box_active_at(src_box, current_sec):
                                 bx, by, bw, bh = [int(v) for v in bbox]
                                 active_frame_boxes.append(BoundingBox(
                                     x=max(0, bx),
                                     y=max(0, by),
                                     w=min(width - bx, bw),
                                     h=min(height - by, bh),
-                                    label="Object"
+                                    label=src_box.label or "Object",
+                                    mask_type=src_box.mask_type,
                                 ))
-                    elif custom_boxes:
-                        active_frame_boxes.extend(custom_boxes)
+                    elif custom_box_items:
+                        active_frame_boxes.extend([b for b in custom_box_items if _is_box_active_at(b, current_sec)])
 
                 elif mode == "nsfw":
                     tracked_faces = nsfw_face_tracker.update(frame, frame_idx) if nsfw_face_tracker is not None else []
-                    raw_nsfw = detect_nsfw_candidates(
+                    raw_nsfw, _, _ = self.detect_nsfw_frame(
                         frame,
                         sensitivity=nsfw_sensitivity,
                         face_boxes=tracked_faces,
+                        allowed_classes=nsfw_classes,
                     )
                     matched_nsfw = set()
                     unmatched_nsfw = []
@@ -1218,8 +1676,10 @@ class CensorProcessor:
                     for tid in stale_nsfw:
                         del nsfw_tracks[tid]
 
-                if custom_boxes and mode != "specific_object":
-                    active_frame_boxes.extend(custom_boxes)
+                if custom_box_items and mode != "specific_object":
+                    active_frame_boxes.extend([b for b in custom_box_items if _is_box_active_at(b, current_sec)])
+                if custom_brush_items:
+                    active_frame_boxes.extend([b for b in custom_brush_items if _is_box_active_at(b, current_sec)])
 
                 masked_frame = apply_masks_to_frame(frame, active_frame_boxes, mask_config)
                 if encoder.poll() is not None:

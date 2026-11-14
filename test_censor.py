@@ -212,6 +212,65 @@ def test_video_censor_pipeline():
     print(f"✓ Video processed successfully: {res} (Size: {os.path.getsize(res)} bytes)")
 
 
+def test_five_shapes_and_exact_face_fit():
+    from engine.censor_processor import apply_masks_to_frame
+    img = create_synthetic_face_image(320, 240, 80, 40, 120)
+    detector = FaceDetector()
+    exact_faces = detector.detect(img, padding_percent=0.0, face_fit="exact")
+    loose_faces = detector.detect(img, padding_percent=0.25, face_fit="loose")
+    assert len(exact_faces) >= 1 and len(loose_faces) >= 1
+    assert exact_faces[0].area <= loose_faces[0].area, "Exact visible face fit must stay tighter than loose fit"
+
+    box = BoundingBox(80, 40, 120, 140, label="Face #1")
+    for shape in ("oval", "rect", "circle", "triangle", "heart"):
+        cfg = MaskConfig(mask_type="blur", intensity=80, shape=shape, feather=20)
+        masked = apply_masks_to_frame(img, [box], cfg)
+        assert masked.shape == img.shape
+        # Corner outside any centered shape must remain unchanged while center changes
+        assert np.array_equal(masked[5, 5], img[5, 5]), f"Corner changed unexpectedly for shape={shape}"
+        diff_center = int(np.abs(masked[100:120, 130:150].astype(int) - img[100:120, 130:150].astype(int)).sum())
+        assert diff_center > 50, f"Center pixels were not masked for shape={shape}"
+
+
+def test_brush_and_eraser_subtraction():
+    from engine.censor_processor import apply_masks_to_frame
+    # Checkerboard high-contrast texture so smooth blur clearly changes pixel values
+    img = np.zeros((200, 200, 3), dtype=np.uint8)
+    for y in range(0, 200, 8):
+        for x in range(0, 200, 8):
+            if ((x // 8) + (y // 8)) % 2 == 0:
+                img[y:y + 8, x:x + 8] = (240, 240, 240)
+    box = BoundingBox(
+        10, 10, 180, 180,
+        kind="brush",
+        brush_points=[(30.0, 100.0), (170.0, 100.0)],
+        brush_radius=22.0,
+        eraser_points=[(100.0, 100.0)],
+        eraser_radius=20.0,
+    )
+    cfg = MaskConfig(mask_type="blur", intensity=90, feather=0)
+    masked = apply_masks_to_frame(img, [box], cfg)
+    # Left end (30, 100) should be blurred; erased middle (100, 100) should match original cleanly
+    left_diff = int(np.abs(masked[92:108, 22:38].astype(int) - img[92:108, 22:38].astype(int)).sum())
+    erased_diff = int(np.abs(masked[96:104, 96:104].astype(int) - img[96:104, 96:104].astype(int)).sum())
+    assert left_diff > 500, "Brush stroke did not blur left region"
+    assert erased_diff < 50, f"Eraser subtraction failed, diff={erased_diff}"
+
+
+def test_nudenet_detector_loaded_and_filtering():
+    from engine.censor_processor import NudeNetDetector, _get_shared_nudenet_detector
+    det = _get_shared_nudenet_detector()
+    assert isinstance(det, NudeNetDetector)
+    assert det.is_available(), "NudeNet ONNX model should be loaded in models/320n.onnx"
+    blank = np.zeros((240, 240, 3), dtype=np.uint8)
+    results = det.detect(blank, sensitivity=0.5, allowed_classes=["FEMALE_BREAST_EXPOSED"])
+    assert isinstance(results, list) and len(results) == 0
+    via_proc, det_name, _ = CensorProcessor().detect_nsfw_frame(
+        blank, sensitivity=0.5, allowed_classes=["FEMALE_BREAST_EXPOSED"]
+    )
+    assert isinstance(via_proc, list) and "nudenet" in det_name.lower()
+
+
 if __name__ == "__main__":
     test_safe_io()
     test_face_detector()
@@ -220,6 +279,9 @@ if __name__ == "__main__":
     test_brief_1_second_appearance_tracking()
     test_specific_object_tracking_mil()
     test_video_censor_pipeline()
+    test_five_shapes_and_exact_face_fit()
+    test_brush_and_eraser_subtraction()
+    test_nudenet_detector_loaded_and_filtering()
     print("\n==============================================")
     print("ALL DIVERSIFIED CENSOR ENGINE TESTS PASSED! 🚀")
     print("==============================================")

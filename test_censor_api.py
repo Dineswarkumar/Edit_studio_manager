@@ -212,10 +212,115 @@ def test_api_censor_video_single_face_flow():
     raise TimeoutError("Single-face video censor job timed out!")
 
 
+def test_api_capabilities_and_shapes_preview():
+    cap_res = client.get("/api/system/capabilities")
+    assert cap_res.status_code == 200
+    caps = cap_res.json()
+    assert "hw_accel" in caps and "nudenet_available" in caps
+    assert caps["nudenet_available"] is True
+
+    # Upload an image and verify 5-shape + exact-face-fit preview
+    img = create_synthetic_face_image(360, 280, 90, 40, 120)
+    img_path = os.path.join(TEST_DIR, "shapes_preview.jpg")
+    cv2.imwrite(img_path, img)
+    with open(img_path, "rb") as f:
+        up = client.post("/api/upload-media", files={"files": ("shapes_preview.jpg", f, "image/jpeg")})
+    assert up.status_code == 200
+    file_id = up.json()["media"][0]["id"]
+
+    det = client.post("/api/censor/detect-faces", json={"file_id": file_id, "frame_sec": 0.0, "face_fit": "exact", "padding_percent": 0.0})
+    assert det.status_code == 200
+    assert len(det.json()["faces"]) >= 1
+
+    for shape in ("circle", "triangle", "heart"):
+        prev = client.post("/api/censor/preview", json={
+            "file_id": file_id,
+            "frame_sec": 0.0,
+            "boxes": det.json()["faces"],
+            "mask_config": {"mask_type": "blur", "intensity": 75, "feather": 25, "shape": shape}
+        })
+        assert prev.status_code == 200
+        assert "preview_url" in prev.json()
+
+
+def test_api_video_batch_and_error_isolation():
+    vid1 = os.path.join(TEST_DIR, "batch_clip_1.mp4")
+    vid2 = os.path.join(TEST_DIR, "batch_clip_2.mp4")
+    for vp in (vid1, vid2):
+        out = cv2.VideoWriter(vp, cv2.VideoWriter_fourcc(*"mp4v"), 15.0, (320, 240))
+        for i in range(10):
+            out.write(create_synthetic_face_image(320, 240, 90 + i * 2, 50, 90))
+        out.release()
+
+    with open(vid1, "rb") as f1, open(vid2, "rb") as f2:
+        up = client.post("/api/upload-media", files=[
+            ("files", ("batch_clip_1.mp4", f1, "video/mp4")),
+            ("files", ("batch_clip_2.mp4", f2, "video/mp4")),
+        ])
+    assert up.status_code == 200
+    media = up.json()["media"]
+    assert len(media) == 2
+
+    res = client.post("/api/censor/process-video-batch", json={
+        "items": [
+            {"file_id": media[0]["id"], "mode": "faces_all"},
+            {"file_id": media[1]["id"], "mode": "faces_all"},
+            {"file_id": "non_existent_clip_id", "mode": "faces_all"},
+        ],
+        "mask_config": {"mask_type": "blur", "intensity": 65, "shape": "heart"}
+    })
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    for _ in range(60):
+        time.sleep(0.3)
+        st = client.get(f"/api/job/{job_id}")
+        assert st.status_code == 200
+        job = st.json()
+        if job["status"] == "completed":
+            items = job.get("items", [])
+            assert len(items) == 3
+            ok_items = [it for it in items if it["status"] == "completed"]
+            failed_items = [it for it in items if it["status"] == "failed"]
+            assert len(ok_items) == 2 and len(failed_items) == 1
+            assert job["download_url"].endswith(".zip") or "download" in job["download_url"]
+            return
+        elif job["status"] == "failed":
+            raise RuntimeError(f"Batch video job failed unexpectedly: {job.get('error')}")
+    raise TimeoutError("Batch video job timed out!")
+
+
+def test_api_lan_pin_auth_guard():
+    import core.state as app_state
+    was_enabled = bool(app_state.lan_auth_state["enabled"])
+    orig_pin = app_state.lan_auth_state["pin"]
+    orig_tokens = set(app_state.lan_auth_state["tokens"])
+    try:
+        app_state.enable_lan_pin("123456")
+        bad = client.post("/api/auth/lan-verify", json={"pin": "000000"})
+        assert bad.status_code == 401
+        ok = client.post("/api/auth/lan-verify", json={"pin": "123456"})
+        assert ok.status_code == 200
+        token = ok.json()["token"]
+        assert app_state.is_lan_token_valid(token) is True
+        status = client.get("/api/auth/lan-status")
+        assert status.status_code == 200
+        assert status.json()["lan_protected"] is True
+    finally:
+        if was_enabled and orig_pin:
+            app_state.enable_lan_pin(orig_pin)
+            app_state.lan_auth_state["tokens"].update(orig_tokens)
+        else:
+            app_state.disable_lan_pin()
+
+
 if __name__ == "__main__":
     test_api_censor_image_flow()
     test_api_censor_video_flow()
     test_api_censor_video_single_face_flow()
+    test_api_capabilities_and_shapes_preview()
+    test_api_video_batch_and_error_isolation()
+    test_api_lan_pin_auth_guard()
     print("\n==============================================")
     print("ALL CENSOR API END-TO-END TESTS PASSED! 🚀")
     print("==============================================")
