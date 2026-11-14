@@ -107,15 +107,53 @@
     renderLutChips();
   }
 
+  const LUT_SWATCHES = {
+    "": "linear-gradient(135deg, #2b313a 0%, #64748b 52%, #cbd5e1 100%)",
+    teal_orange: "linear-gradient(135deg, #0d4f5c 0%, #14b8a6 46%, #f59e0b 100%)",
+    kodak_2383: "linear-gradient(135deg, #1e293b 0%, #b45309 52%, #fde68a 100%)",
+    crisp_daylight: "linear-gradient(135deg, #0369a1 0%, #38bdf8 54%, #f8fafc 100%)",
+    moody_noir: "linear-gradient(135deg, #090b0f 0%, #374151 55%, #9ca3af 100%)",
+    warm_sunset: "linear-gradient(135deg, #7c2d12 0%, #ea580c 50%, #fcd34d 100%)",
+    matte_fade: "linear-gradient(135deg, #3f3d46 0%, #7c7267 52%, #d6cfc4 100%)",
+    __custom__: "linear-gradient(135deg, #6366f1 0%, #06b6d4 52%, #f43f5e 100%)",
+  };
+
+  function getSliderSpecs() {
+    return [
+      { id: "sliderLutStrength", input: el.sliderLutStrength, label: el.valLutStrength, key: "lut_strength", defRaw: 100, scale: 0.01, fmt: (v) => `${Math.round(v)}%`, group: "lut" },
+      { id: "sliderExposure", input: el.sliderExposure, label: el.valExposure, key: "exposure", defRaw: 0, scale: 1, fmt: (v) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}`, group: "tone" },
+      { id: "sliderColorContrast", input: el.sliderContrast, label: el.valContrast, key: "contrast", defRaw: 1.0, scale: 1, fmt: (v) => `${v.toFixed(2)}x`, group: "tone" },
+      { id: "sliderHighlights", input: el.sliderHighlights, label: el.valHighlights, key: "highlights", defRaw: 0, scale: 0.01, fmt: (v) => `${Math.round(v)}`, group: "tone" },
+      { id: "sliderShadows", input: el.sliderShadows, label: el.valShadows, key: "shadows", defRaw: 0, scale: 0.01, fmt: (v) => `${Math.round(v)}`, group: "tone" },
+      { id: "sliderColorSat", input: el.sliderSat, label: el.valSat, key: "saturation", defRaw: 1.0, scale: 1, fmt: (v) => `${v.toFixed(2)}x`, group: "color" },
+      { id: "sliderTemp", input: el.sliderTemp, label: el.valTemp, key: "temperature", defRaw: 0, scale: 0.01, fmt: (v) => `${Math.round(v)}`, group: "color" },
+      { id: "sliderColorVignette", input: el.sliderVignette, label: el.valVignette, key: "vignette", defRaw: 0, scale: 0.01, fmt: (v) => `${Math.round(v)}%`, group: "color" },
+      { id: "sliderGrain", input: el.sliderGrain, label: el.valGrain, key: "grain", defRaw: 0, scale: 0.01, fmt: (v) => `${Math.round(v)}%`, group: "color" },
+    ];
+  }
+
+  function applySliderSpecValue(spec, rawVal) {
+    if (!spec || !spec.input || !spec.label) return;
+    spec.input.value = rawVal;
+    state.config[spec.key] = rawVal * spec.scale;
+    spec.label.textContent = spec.fmt(rawVal);
+    const modified = Math.abs(rawVal - spec.defRaw) > 1e-4;
+    spec.label.classList.toggle("is-modified", modified);
+  }
+
   function renderLutChips() {
     const active = state.config.custom_lut_filename ? "__custom__" : (state.config.lut_id || "");
-    el.lutGrid.innerHTML = `<button type="button" class="lut-chip ${active === "" ? "active" : ""}" data-lut="">Original<small>No LUT applied</small></button>`;
+    const buildChipHtml = (id, label, desc) => {
+      const swatch = LUT_SWATCHES[id] || LUT_SWATCHES.__custom__;
+      return `<span class="lut-swatch" style="background: ${swatch};"></span><span class="lut-meta"><span class="lut-name">${escapeHtml(label)}</span><small>${escapeHtml(desc)}</small></span>`;
+    };
+    el.lutGrid.innerHTML = `<button type="button" class="lut-chip ${active === "" ? "active" : ""}" data-lut="">${buildChipHtml("", "Original", "No LUT applied")}</button>`;
     state.luts.forEach((lut) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = `lut-chip ${active === lut.id ? "active" : ""}`;
       btn.dataset.lut = lut.id;
-      btn.innerHTML = `${escapeHtml(lut.label)}<small>${escapeHtml(lut.description)}</small>`;
+      btn.innerHTML = buildChipHtml(lut.id, lut.label, lut.description);
       el.lutGrid.appendChild(btn);
     });
     el.lutGrid.querySelectorAll(".lut-chip").forEach((chip) => {
@@ -165,6 +203,34 @@
       applySplitClip();
     });
 
+    if (el.compareWrap) {
+      let draggingSplit = false;
+      const updateSplitFromClientX = (clientX) => {
+        const rect = el.compareWrap.getBoundingClientRect();
+        if (rect.width <= 0) return;
+        const pct = Math.max(0, Math.min(100, Math.round(((clientX - rect.left) / rect.width) * 100)));
+        state.splitPct = pct;
+        if (el.splitSlider) el.splitSlider.value = String(pct);
+        if (el.splitVal) el.splitVal.textContent = `${pct}%`;
+        applySplitClip();
+      };
+      el.compareWrap.addEventListener("pointerdown", (e) => {
+        if (e.button !== undefined && e.button !== 0 && e.pointerType === "mouse") return;
+        draggingSplit = true;
+        if (el.compareWrap.setPointerCapture && e.pointerId !== undefined) {
+          try { el.compareWrap.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+        updateSplitFromClientX(e.clientX);
+      });
+      el.compareWrap.addEventListener("pointermove", (e) => {
+        if (!draggingSplit) return;
+        updateSplitFromClientX(e.clientX);
+      });
+      const stopSplitDrag = () => { draggingSplit = false; };
+      el.compareWrap.addEventListener("pointerup", stopSplitDrag);
+      el.compareWrap.addEventListener("pointercancel", stopSplitDrag);
+    }
+
     if (el.videoScrubber) {
       el.videoScrubber.addEventListener("input", (e) => {
         const sec = parseFloat(e.target.value) || 0;
@@ -184,24 +250,46 @@
     el.btnUploadCustomLut.addEventListener("click", () => el.customLutInput.click());
     el.customLutInput.addEventListener("change", handleCustomLutUpload);
 
-    const bindRange = (input, labelEl, key, fmt, scale = 1) => {
-      input.addEventListener("input", () => {
-        const raw = parseFloat(input.value);
-        state.config[key] = raw * scale;
-        labelEl.textContent = fmt(raw);
+    const specs = getSliderSpecs();
+    const specById = new Map(specs.map((s) => [s.id, s]));
+    specs.forEach((spec) => {
+      if (!spec.input) return;
+      spec.input.addEventListener("input", () => {
+        const raw = parseFloat(spec.input.value);
+        applySliderSpecValue(spec, raw);
         applyInstantCssFeedback();
         schedulePreview(false);
       });
-    };
-    bindRange(el.sliderLutStrength, el.valLutStrength, "lut_strength", (v) => `${Math.round(v)}%`, 0.01);
-    bindRange(el.sliderExposure, el.valExposure, "exposure", (v) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}`);
-    bindRange(el.sliderContrast, el.valContrast, "contrast", (v) => `${v.toFixed(2)}x`);
-    bindRange(el.sliderHighlights, el.valHighlights, "highlights", (v) => `${Math.round(v)}`, 0.01);
-    bindRange(el.sliderShadows, el.valShadows, "shadows", (v) => `${Math.round(v)}`, 0.01);
-    bindRange(el.sliderSat, el.valSat, "saturation", (v) => `${v.toFixed(2)}x`);
-    bindRange(el.sliderTemp, el.valTemp, "temperature", (v) => `${Math.round(v)}`, 0.01);
-    bindRange(el.sliderVignette, el.valVignette, "vignette", (v) => `${Math.round(v)}%`, 0.01);
-    bindRange(el.sliderGrain, el.valGrain, "grain", (v) => `${Math.round(v)}%`, 0.01);
+      spec.input.addEventListener("dblclick", () => {
+        applySliderSpecValue(spec, spec.defRaw);
+        applyInstantCssFeedback();
+        schedulePreview(true);
+      });
+    });
+
+    const toolsPanel = document.getElementById("toolsPanel");
+    if (toolsPanel) {
+      toolsPanel.addEventListener("click", (e) => {
+        const groupBtn = e.target.closest("[data-reset-group]");
+        if (groupBtn) {
+          const grp = groupBtn.dataset.resetGroup;
+          specs.filter((s) => s.group === grp).forEach((s) => applySliderSpecValue(s, s.defRaw));
+          applyInstantCssFeedback();
+          schedulePreview(true);
+          return;
+        }
+        const badge = e.target.closest("[data-reset-slider]");
+        if (badge && badge.classList.contains("is-modified")) {
+          const spec = specById.get(badge.dataset.resetSlider);
+          if (spec) {
+            e.preventDefault();
+            applySliderSpecValue(spec, spec.defRaw);
+            applyInstantCssFeedback();
+            schedulePreview(true);
+          }
+        }
+      });
+    }
 
     el.exportFmt.addEventListener("change", (e) => { state.config.export_format = e.target.value; });
     el.videoPreset.addEventListener("change", (e) => { state.config.video_preset = e.target.value; });
@@ -223,20 +311,9 @@
   }
 
   function resetAllControls() {
-    Object.assign(state.config, {
-      lut_id: null, custom_lut_filename: null, lut_strength: 1.0, exposure: 0.0,
-      contrast: 1.0, highlights: 0.0, shadows: 0.0, saturation: 1.0,
-      temperature: 0.0, vignette: 0.0, grain: 0.0,
-    });
-    el.sliderLutStrength.value = 100; el.valLutStrength.textContent = "100%";
-    el.sliderExposure.value = 0; el.valExposure.textContent = "0.00";
-    el.sliderContrast.value = 1.0; el.valContrast.textContent = "1.00x";
-    el.sliderHighlights.value = 0; el.valHighlights.textContent = "0";
-    el.sliderShadows.value = 0; el.valShadows.textContent = "0";
-    el.sliderSat.value = 1.0; el.valSat.textContent = "1.00x";
-    el.sliderTemp.value = 0; el.valTemp.textContent = "0";
-    el.sliderVignette.value = 0; el.valVignette.textContent = "0%";
-    el.sliderGrain.value = 0; el.valGrain.textContent = "0%";
+    state.config.lut_id = null;
+    state.config.custom_lut_filename = null;
+    getSliderSpecs().forEach((spec) => applySliderSpecValue(spec, spec.defRaw));
     el.customLutStatus.style.display = "none";
     clearCssFeedback();
     renderLutChips();
