@@ -11,7 +11,7 @@ from typing import List, Literal, Optional, Set
 
 import cv2
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.state import (
     IMAGE_EXTENSIONS,
@@ -65,12 +65,17 @@ class CensorBoxModel(BaseModel):
     landmarks: Optional[List[List[float]]] = None
     kind: Literal["box", "brush"] = "box"
     brush_points: Optional[List[List[float]]] = None
-    brush_radius: float = Field(default=24.0, ge=1.0, le=300.0)
+    brush_radius: float = Field(default=24.0, ge=1.0, le=2000.0)
     eraser_points: Optional[List[List[float]]] = None
-    eraser_radius: float = Field(default=24.0, ge=1.0, le=300.0)
+    eraser_radius: float = Field(default=24.0, ge=1.0, le=2000.0)
     mask_type: Optional[Literal["blur", "pixelate", "emoji", "redact"]] = None
     start_sec: Optional[float] = None
     end_sec: Optional[float] = None
+
+    @field_validator("brush_radius", "eraser_radius", mode="before")
+    @classmethod
+    def _coerce_null_radius(cls, value):
+        return 24.0 if value is None else value
 
 
 class CensorMaskConfigModel(BaseModel):
@@ -228,12 +233,14 @@ def api_censor_detect_nsfw(req: CensorDetectRequest):
 
     detect_fn = getattr(processor, "detect_nsfw_frame", None)
     if callable(detect_fn):
-        candidates, detector_name, warning_msg = detect_fn(
-            frame,
+        detect_kwargs = dict(
             sensitivity=req.sensitivity,
             face_boxes=face_boxes,
             allowed_classes=req.nsfw_classes,
         )
+        if "check_orientations" in detect_fn.__code__.co_varnames:
+            detect_kwargs["check_orientations"] = True
+        candidates, detector_name, warning_msg = detect_fn(frame, **detect_kwargs)
     else:
         candidates = detect_nsfw_candidates(frame, sensitivity=req.sensitivity, face_boxes=face_boxes)
         detector_name = "skin-region heuristic"
@@ -327,14 +334,15 @@ def api_censor_preview(req: CensorPreviewRequest):
 
     mask_cfg = _build_censor_mask_config(req.mask_config)
     masked = apply_masks_to_frame(frame, boxes, mask_cfg)
-    preview_name = f"censor_prev_{req.file_id}_{uuid.uuid4().hex[:8]}.jpg"
+    prefix = "censor_raw" if (not boxes and req.preview_revision == 0) else "censor_prev"
+    preview_name = f"{prefix}_{req.file_id}.jpg"
     preview_path = os.path.join(THUMBS_DIR, preview_name)
     if not safe_imwrite(preview_path, masked):
         raise HTTPException(status_code=500, detail="Failed to encode censor preview")
     register_session_file(req.session_id, preview_path)
 
     return {
-        "preview_url": f"/api/thumbnails/{url_segment(preview_name)}",
+        "preview_url": f"/api/thumbnails/{url_segment(preview_name)}?v={uuid.uuid4().hex[:6]}",
         "revision": req.preview_revision,
         "width": int(masked.shape[1]),
         "height": int(masked.shape[0]),

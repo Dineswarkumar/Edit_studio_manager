@@ -7,9 +7,11 @@
     luts: [],
     previewTimer: null,
     previewReqId: 0,
+    previewAbortController: null,
     activeJobId: null,
     isPeeking: false,
-    splitPct: 55,
+    splitPct: 50,
+    videoFrameSec: 0.5,
     config: {
       lut_id: null,
       custom_lut_filename: null,
@@ -38,12 +40,17 @@
     selectedBadge: document.getElementById("colorSelectedBadge"),
     processBtn: document.getElementById("btnProcessColorBatch"),
     resetBtn: document.getElementById("btnResetGrade"),
+    renderStatus: document.getElementById("colorRenderStatus"),
     dimLabel: document.getElementById("colorDimLabel"),
     compareWrap: document.getElementById("colorCompareWrap"),
     beforeImg: document.getElementById("colorBeforeImg"),
     afterImg: document.getElementById("colorAfterImg"),
+    afterPill: document.getElementById("colorAfterPill"),
     splitLine: document.getElementById("colorSplitLine"),
     emptyStage: document.getElementById("colorEmptyStage"),
+    videoScrubBar: document.getElementById("colorVideoScrubBar"),
+    videoScrubber: document.getElementById("colorVideoScrubber"),
+    videoTimeLabel: document.getElementById("colorVideoTimeLabel"),
     splitSlider: document.getElementById("colorSplitSlider"),
     splitVal: document.getElementById("colorSplitVal"),
     peekBtn: document.getElementById("btnColorPeek"),
@@ -158,6 +165,15 @@
       applySplitClip();
     });
 
+    if (el.videoScrubber) {
+      el.videoScrubber.addEventListener("input", (e) => {
+        const sec = parseFloat(e.target.value) || 0;
+        state.videoFrameSec = sec;
+        if (el.videoTimeLabel) el.videoTimeLabel.textContent = `${sec.toFixed(1)}s`;
+        schedulePreview(false);
+      });
+    }
+
     const startPeek = () => { state.isPeeking = true; applySplitClip(); };
     const stopPeek = () => { state.isPeeking = false; applySplitClip(); };
     el.peekBtn.addEventListener("mousedown", startPeek);
@@ -173,6 +189,7 @@
         const raw = parseFloat(input.value);
         state.config[key] = raw * scale;
         labelEl.textContent = fmt(raw);
+        applyInstantCssFeedback();
         schedulePreview(false);
       });
     };
@@ -194,6 +211,17 @@
     el.btnCloseModal.addEventListener("click", () => el.modal.classList.remove("open"));
   }
 
+  function applyInstantCssFeedback() {
+    if (!el.afterImg) return;
+    // Provide zero-lag approximate preview while debounced server trilinear LUT renders
+    const expMul = Math.max(0.25, Math.min(2.5, Math.pow(2, state.config.exposure * 0.45)));
+    el.afterImg.style.filter = `brightness(${expMul.toFixed(2)}) contrast(${state.config.contrast.toFixed(2)}) saturate(${state.config.saturation.toFixed(2)})`;
+  }
+
+  function clearCssFeedback() {
+    if (el.afterImg) el.afterImg.style.filter = "";
+  }
+
   function resetAllControls() {
     Object.assign(state.config, {
       lut_id: null, custom_lut_filename: null, lut_strength: 1.0, exposure: 0.0,
@@ -210,33 +238,47 @@
     el.sliderVignette.value = 0; el.valVignette.textContent = "0%";
     el.sliderGrain.value = 0; el.valGrain.textContent = "0%";
     el.customLutStatus.style.display = "none";
+    clearCssFeedback();
     renderLutChips();
     schedulePreview(true);
   }
 
   function applySplitClip() {
-    const pct = state.isPeeking ? 0 : state.splitPct;
-    // Right side of split is Graded (or clip left = 100 - pct from right so left=Before, right=After)
-    el.afterImg.style.clipPath = `inset(0 0 0 ${100 - pct}%)`;
-    el.splitLine.style.left = `${100 - pct}%`;
+    // Left side = Original (0..pct%), Right side = Graded (pct%..100%)
+    const pct = state.isPeeking ? 100 : state.splitPct;
+    el.afterImg.style.clipPath = `inset(0 0 0 ${pct}%)`;
+    el.splitLine.style.left = `${pct}%`;
+    if (el.afterPill) el.afterPill.style.opacity = pct >= 95 ? "0.25" : "1";
   }
 
   async function uploadFiles(files) {
-    const fd = new FormData();
-    Array.from(files).forEach((f) => fd.append("files", f));
-    if (window.STUDIO_TAB_SESSION_ID) fd.append("session_id", window.STUDIO_TAB_SESSION_ID);
-    const res = await fetch("/api/upload-media", { method: "POST", body: fd });
-    const data = await res.json();
-    (data.media || []).forEach((m) => {
-      if (m.media_type === "image" || m.media_type === "video") {
-        state.mediaList.push(m);
-        state.selectedIds.add(m.id);
-        if (!state.activeMediaId) state.activeMediaId = m.id;
+    if (el.renderStatus) el.renderStatus.textContent = "Uploading…";
+    try {
+      const fd = new FormData();
+      Array.from(files).forEach((f) => fd.append("files", f));
+      if (window.STUDIO_TAB_SESSION_ID) fd.append("session_id", window.STUDIO_TAB_SESSION_ID);
+      const res = await fetch("/api/upload-media", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || "Upload failed.");
+        return;
       }
-    });
-    renderMediaList();
-    syncCount();
-    schedulePreview(true);
+      (data.media || []).forEach((m) => {
+        if (m.media_type === "image" || m.media_type === "video") {
+          state.mediaList.push(m);
+          state.selectedIds.add(m.id);
+          if (!state.activeMediaId) {
+            state.activeMediaId = m.id;
+            state.videoFrameSec = m.media_type === "video" ? Math.min(0.5, (m.duration || 1) / 2) : 0;
+          }
+        }
+      });
+      renderMediaList();
+      syncCount();
+      schedulePreview(true);
+    } finally {
+      if (el.renderStatus && el.renderStatus.textContent === "Uploading…") el.renderStatus.textContent = "";
+    }
   }
 
   async function handleCustomLutUpload(e) {
@@ -263,7 +305,7 @@
   function renderMediaList() {
     el.mediaCount.textContent = `${state.mediaList.length} files`;
     if (!state.mediaList.length) {
-      el.mediaList.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:30px 10px;font-size:13px;">No media queued yet.</div>`;
+      el.mediaList.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:36px 10px;font-size:13px;">No media queued yet.</div>`;
       return;
     }
     el.mediaList.innerHTML = "";
@@ -272,8 +314,8 @@
       card.className = `media-card ${m.id === state.activeMediaId ? "active" : ""}`;
       card.innerHTML = `
         <input type="checkbox" class="clr-chk" ${state.selectedIds.has(m.id) ? "checked" : ""}>
-        <div class="media-thumb-wrapper"><img src="${m.thumb_url}" class="media-thumb-img" alt=""><span class="media-badge ${m.media_type === "video" ? "vid" : "img"}">${m.media_type === "video" ? "VID" : "IMG"}</span></div>
-        <div class="media-info"><div class="media-filename">${escapeHtml(m.filename)}</div><div class="media-meta">${m.width}×${m.height}</div></div>
+        <div class="media-thumb-wrapper"><img src="${m.thumb_url || ""}" class="media-thumb-img" alt=""><span class="media-badge ${m.media_type === "video" ? "vid" : "img"}">${m.media_type === "video" ? "VID" : "IMG"}</span></div>
+        <div class="media-info"><div class="media-filename">${escapeHtml(m.filename)}</div><div class="media-meta">${m.width}×${m.height}${m.media_type === "video" && m.duration ? ` · ${m.duration.toFixed(1)}s` : ""}</div></div>
       `;
       card.querySelector(".clr-chk").addEventListener("change", (ev) => {
         if (ev.target.checked) state.selectedIds.add(m.id);
@@ -283,6 +325,7 @@
       card.addEventListener("click", (ev) => {
         if (ev.target.classList.contains("clr-chk")) return;
         state.activeMediaId = m.id;
+        state.videoFrameSec = m.media_type === "video" ? Math.min(0.5, (m.duration || 1) / 2) : 0;
         renderMediaList();
         schedulePreview(true);
       });
@@ -298,35 +341,68 @@
   function schedulePreview(immediate) {
     if (state.previewTimer) clearTimeout(state.previewTimer);
     if (immediate) renderPreview();
-    else state.previewTimer = setTimeout(renderPreview, 120);
+    else state.previewTimer = setTimeout(renderPreview, 90);
   }
 
   async function renderPreview() {
     const active = state.mediaList.find((m) => m.id === state.activeMediaId);
     if (!active) {
       el.compareWrap.style.display = "none";
-      el.emptyStage.style.display = "block";
+      el.emptyStage.style.display = "flex";
+      if (el.videoScrubBar) el.videoScrubBar.style.display = "none";
       el.dimLabel.textContent = "No media selected";
+      if (el.renderStatus) el.renderStatus.textContent = "";
       return;
     }
+
+    const isVid = active.media_type === "video";
+    if (el.videoScrubBar && el.videoScrubber) {
+      el.videoScrubBar.style.display = isVid ? "flex" : "none";
+      if (isVid) {
+        const dur = Math.max(0.2, active.duration || 10);
+        el.videoScrubber.max = dur.toFixed(1);
+        el.videoScrubber.value = Math.min(state.videoFrameSec, dur).toFixed(1);
+        if (el.videoTimeLabel) el.videoTimeLabel.textContent = `${Number(el.videoScrubber.value).toFixed(1)}s`;
+      }
+    }
+
     el.dimLabel.textContent = `${active.filename} (${active.width}×${active.height})`;
+    if (el.renderStatus) el.renderStatus.textContent = "Rendering grade…";
     const reqId = ++state.previewReqId;
-    const res = await fetch("/api/color/preview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+
+    try {
+      if (state.previewAbortController) state.previewAbortController.abort();
+      state.previewAbortController = new AbortController();
+      const payload = {
         file_id: active.id,
         config: state.config,
         session_id: window.STUDIO_TAB_SESSION_ID || null,
-      }),
-    });
-    const data = await res.json();
-    if (reqId !== state.previewReqId || !res.ok) return;
-    el.beforeImg.src = data.before_url;
-    el.afterImg.src = data.after_url;
-    el.compareWrap.style.display = "inline-block";
-    el.emptyStage.style.display = "none";
-    applySplitClip();
+      };
+      if (isVid) payload.frame_sec = state.videoFrameSec;
+
+      const res = await fetch("/api/color/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: state.previewAbortController.signal,
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (reqId !== state.previewReqId) return;
+      if (!res.ok) {
+        if (el.renderStatus) el.renderStatus.textContent = data.detail || "Preview failed";
+        return;
+      }
+      el.beforeImg.src = data.before_url;
+      el.afterImg.src = data.after_url;
+      clearCssFeedback();
+      el.compareWrap.style.display = "inline-block";
+      el.emptyStage.style.display = "none";
+      if (el.renderStatus) el.renderStatus.textContent = "Live 3D LUT";
+      applySplitClip();
+    } catch (err) {
+      if (err.name === "AbortError" || reqId !== state.previewReqId) return;
+      if (el.renderStatus) el.renderStatus.textContent = "Preview error";
+    }
   }
 
   async function startBatchExport() {
@@ -348,6 +424,10 @@
       }),
     });
     const data = await res.json();
+    if (!res.ok) {
+      el.jobText.textContent = data.detail || "Could not start color grading job.";
+      return;
+    }
     state.activeJobId = data.job_id;
     pollColorJob();
   }

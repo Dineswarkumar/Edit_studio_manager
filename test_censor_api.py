@@ -314,6 +314,50 @@ def test_api_lan_pin_auth_guard():
             app_state.disable_lan_pin()
 
 
+def test_api_null_eraser_and_large_brush_radius():
+    import socket
+    from server import _resolve_bind_port
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    sock.bind(("0.0.0.0", 0))
+    sock.listen(1)
+    occupied = sock.getsockname()[1]
+    try:
+        resolved = _resolve_bind_port("0.0.0.0", occupied, allow_fallback=True)
+        assert resolved != occupied and resolved > occupied
+    finally:
+        sock.close()
+
+    img_path = os.path.join(TEST_DIR, "test_brush_payload.jpg")
+    cv2.imwrite(img_path, create_synthetic_face_image(480, 360, face_x=150, face_y=80, face_size=140))
+    with open(img_path, "rb") as f:
+        up = client.post("/api/upload-media", files={"files": ("test_brush_payload.jpg", f, "image/jpeg")})
+    assert up.status_code == 200
+    fid = up.json()["media"][0]["id"]
+    try:
+        box = {
+            "x": 140,
+            "y": 70,
+            "w": 160,
+            "h": 160,
+            "kind": "brush",
+            "brush_points": [[160, 90], [220, 140]],
+            "brush_radius": 1820,
+            "eraser_points": [[190, 120]],
+            "eraser_radius": None,
+            "label": "Brush Mask #1",
+        }
+        prev = client.post("/api/censor/preview", json={"file_id": fid, "boxes": [box]})
+        assert prev.status_code == 200, prev.text
+        batch = client.post("/api/censor/process-batch", json={"items": [{"file_id": fid, "boxes": [box]}]})
+        assert batch.status_code == 200, batch.text
+        assert batch.json()["processed_count"] == 1
+    finally:
+        client.delete(f"/api/media/{fid}")
+
+
 if __name__ == "__main__":
     test_api_censor_image_flow()
     test_api_censor_video_flow()
@@ -321,6 +365,7 @@ if __name__ == "__main__":
     test_api_capabilities_and_shapes_preview()
     test_api_video_batch_and_error_isolation()
     test_api_lan_pin_auth_guard()
+    test_api_null_eraser_and_large_brush_radius()
     print("\n==============================================")
     print("ALL CENSOR API END-TO-END TESTS PASSED! 🚀")
     print("==============================================")

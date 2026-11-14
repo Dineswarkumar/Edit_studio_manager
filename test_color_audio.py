@@ -146,6 +146,13 @@ def test_color_and_audio_api_endpoints():
         assert an.status_code == 200
         assert an.json()["stats"]["has_audio"] is True
 
+        aprev = client.post(
+            "/api/audio/preview",
+            json={"file_id": afid, "start_sec": 0.0, "config": {"normalize_target_lufs": -14.0, "voice_clarity": True}},
+        )
+        assert aprev.status_code == 200, aprev.text
+        assert aprev.json().get("preview_url") and aprev.json().get("output_stats", {}).get("has_audio") is True
+
         aproc = client.post("/api/audio/process", json={"file_ids": [afid], "config": {"normalize_target_lufs": -14.0, "output_format": "mp3"}})
         assert aproc.status_code == 200
         ajob_id = aproc.json()["job_id"]
@@ -156,3 +163,27 @@ def test_color_and_audio_api_endpoints():
             time.sleep(0.1)
         assert ast["status"] == "completed"
         assert ast["items"][0]["output_filename"].endswith(".mp3")
+
+        # Verify video preview_base_filename + Color video preview frame extraction
+        import cv2
+        import numpy as np
+
+        vid_path = os.path.join(tmp, "color_clip.mp4")
+        vw = cv2.VideoWriter(vid_path, cv2.VideoWriter_fourcc(*"mp4v"), 15.0, (160, 120))
+        for _ in range(15):
+            vw.write(np.full((120, 160, 3), 90, dtype=np.uint8))
+        vw.release()
+        with open(vid_path, "rb") as f:
+            up_v = client.post("/api/upload-media", files={"files": ("color_clip.mp4", f, "video/mp4")})
+        assert up_v.status_code == 200
+        v_item = up_v.json()["media"][0]
+        assert v_item.get("preview_base_filename")
+        cprev = client.post(
+            "/api/color/preview",
+            json={"file_id": v_item["id"], "frame_sec": 0.4, "config": {"lut_id": "teal_orange", "exposure": 0.1}},
+        )
+        assert cprev.status_code == 200, cprev.text
+        assert "before_url" in cprev.json() and "after_url" in cprev.json()
+        client.delete(f"/api/media/{v_item['id']}")
+        client.delete(f"/api/media/{fid}")
+        client.delete(f"/api/media/{afid}")

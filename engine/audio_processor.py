@@ -14,9 +14,15 @@ import re
 import subprocess
 from typing import Any, Dict, List, Optional
 
+from functools import lru_cache
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("framestudio.audio")
+
+
+@lru_cache(maxsize=64)
+def _cached_raw_audio_stats(abs_path: str, _mtime: float) -> Dict[str, Any]:
+    return _compute_audio_stats(abs_path, pre_filter=None)
 
 
 class AudioBoostConfig(BaseModel):
@@ -55,7 +61,15 @@ def _parse_float(val: Any, default: Optional[float] = None) -> Optional[float]:
 def analyze_audio_stats(src_path: str, *, pre_filter: Optional[str] = None) -> Dict[str, Any]:
     """
     Inspect stream metadata with ffprobe and measure EBU R128 integrated LUFS & true peak.
+    Caches unmodified source measurements by (abs_path, mtime) to skip redundant FFmpeg scans.
     """
+    if pre_filter is None and os.path.isfile(src_path):
+        abs_path = os.path.abspath(src_path)
+        return dict(_cached_raw_audio_stats(abs_path, os.path.getmtime(abs_path)))
+    return _compute_audio_stats(src_path, pre_filter=pre_filter)
+
+
+def _compute_audio_stats(src_path: str, *, pre_filter: Optional[str] = None) -> Dict[str, Any]:
     stats: Dict[str, Any] = {
         "has_audio": False,
         "has_video": False,
@@ -243,4 +257,50 @@ def process_audio_file(src_path: str, out_path: str, config: AudioBoostConfig) -
         "input_stats": input_stats,
         "output_stats": output_stats,
         "video_preserved": keep_video,
+    }
+
+
+def render_audio_preview_snippet(
+    src_path: str,
+    out_path: str,
+    config: AudioBoostConfig,
+    start_sec: float = 0.0,
+    duration_sec: float = 15.0,
+) -> Dict[str, Any]:
+    """
+    Render a fast <=15s audio-only A/B snippet with the active boost/EQ/loudnorm chain
+    so users can audition Before vs After before running full batch export.
+    """
+    input_stats = analyze_audio_stats(src_path)
+    if not input_stats["has_audio"]:
+        raise ValueError("Selected media file has no audio stream to preview.")
+
+    pre_filters = _build_pre_filters(config)
+    filter_parts: List[str] = list(pre_filters)
+    if config.normalize_target_lufs is not None:
+        target_i = float(config.normalize_target_lufs)
+        target_tp = float(config.true_peak_db)
+        filter_parts.append(f"loudnorm=I={target_i:.1f}:TP={target_tp:.1f}:LRA=11")
+    if config.limiter_enabled:
+        limit_lin = max(0.25, min(0.99, 10.0 ** (float(config.true_peak_db) / 20.0)))
+        filter_parts.append(f"alimiter=limit={limit_lin:.4f}:attack=5:release=50")
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    cmd = ["ffmpeg", "-y", "-v", "error"]
+    if start_sec > 0.05:
+        cmd += ["-ss", f"{float(start_sec):.2f}"]
+    cmd += ["-i", src_path, "-t", f"{max(1.0, min(20.0, float(duration_sec))):.2f}", "-vn"]
+    if filter_parts:
+        cmd += ["-af", ",".join(filter_parts)]
+    cmd += ["-c:a", "aac", "-b:a", f"{max(96, min(320, int(config.bitrate_kbps)))}k", "-movflags", "+faststart", out_path]
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+    if proc.returncode != 0:
+        raise RuntimeError(f"FFmpeg audio preview failed: {(proc.stderr or '').strip()[-300:]}")
+
+    out_stats = _compute_audio_stats(out_path)
+    return {
+        "preview_path": out_path,
+        "input_stats": input_stats,
+        "output_stats": out_stats,
     }

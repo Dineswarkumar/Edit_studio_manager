@@ -90,6 +90,38 @@ def _get_local_lan_ip() -> str:
         return "127.0.0.1"
 
 
+def _is_port_bindable(host: str, port: int) -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        sock.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+
+def _resolve_bind_port(host: str, preferred_port: int, allow_fallback: bool = True) -> int:
+    if _is_port_bindable(host, preferred_port):
+        return preferred_port
+    if allow_fallback:
+        for candidate in range(preferred_port + 1, preferred_port + 21):
+            if _is_port_bindable(host, candidate):
+                print(
+                    f"[WARN] Port {preferred_port} is already in use (another Frame Studio window or closing socket). "
+                    f"Using port {candidate} instead."
+                )
+                return candidate
+    raise OSError(
+        f"Port {preferred_port} is already in use. Close the existing Frame Studio window or pass --port <num>."
+    )
+
+
 if __name__ == "__main__":
     import argparse
     import uvicorn
@@ -102,19 +134,20 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     host = "0.0.0.0" if args.lan else "127.0.0.1"
+    bind_port = _resolve_bind_port(host, args.port, allow_fallback=True)
     if args.lan:
         pin = enable_lan_pin(args.pin)
         lan_ip = _get_local_lan_ip()
         print("\n" + "=" * 54)
         print("  Frame Studio Pro (LAN Mode - PIN Protected)")
-        print(f"  Local URL : http://127.0.0.1:{args.port}")
-        print(f"  LAN URL   : http://{lan_ip}:{args.port}")
+        print(f"  Local URL : http://127.0.0.1:{bind_port}")
+        print(f"  LAN URL   : http://{lan_ip}:{bind_port}")
         print(f"  LAN PIN   : {pin}")
         print("=" * 54 + "\n")
     else:
-        print(f"\n  Frame Studio Pro running on http://127.0.0.1:{args.port}\n")
+        print(f"\n  Frame Studio Pro running on http://127.0.0.1:{bind_port}\n")
 
     if args.open:
-        threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()
+        threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{bind_port}")).start()
 
-    uvicorn.run(app, host=host, port=args.port, log_level="warning")
+    uvicorn.run(app, host=host, port=bind_port, log_level="warning")

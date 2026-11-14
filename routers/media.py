@@ -198,6 +198,7 @@ async def upload_media(files: List[UploadFile] = File(...), session_id: Optional
             "saved_filename": save_filename,
             "media_type": media_type,
             "thumb_url": f"/api/thumbnails/{url_segment(thumb_filename)}" if media_type in ("image", "video") else None,
+            "preview_base_filename": preview_base_filename if media_type in ("image", "video") else None,
             "width": width,
             "height": height,
             "duration": round(duration, 2),
@@ -334,7 +335,13 @@ def download_zip(job_id: str):
 @router.get("/api/thumbnails/{filename}")
 def get_thumbnail(filename: str):
     path = resolve_safe_path(THUMBS_DIR, filename, must_exist=True)
-    return FileResponse(path)
+    return FileResponse(
+        path,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @router.get("/api/uploads/{filename}")

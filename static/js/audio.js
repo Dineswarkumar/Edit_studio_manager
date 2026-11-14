@@ -5,6 +5,9 @@
     selectedIds: new Set(),
     activeMediaId: null,
     activeJobId: null,
+    abMode: "original", // "original" | "boosted"
+    previewUrl: null,
+    previewDirty: true,
     config: {
       gain_db: 0.0,
       normalize_target_lufs: -14.0,
@@ -31,8 +34,16 @@
     emptyStage: document.getElementById("audioEmptyStage"),
     inspectorCard: document.getElementById("audioInspectorCard"),
     statLufs: document.getElementById("statLufs"),
+    statOutLufs: document.getElementById("statOutLufs"),
     statPeak: document.getElementById("statPeak"),
+    statOutPeak: document.getElementById("statOutPeak"),
     statFormat: document.getElementById("statFormat"),
+    statDuration: document.getElementById("statDuration"),
+    previewModeLabel: document.getElementById("audioPreviewModeLabel"),
+    btnAbOriginal: document.getElementById("btnAbOriginal"),
+    btnAbBoosted: document.getElementById("btnAbBoosted"),
+    btnRenderPreview: document.getElementById("btnRenderAudioPreview"),
+    previewHint: document.getElementById("audioPreviewHint"),
     audioPlayer: document.getElementById("audioPlayerEl"),
     videoPlayer: document.getElementById("videoAudioPlayerEl"),
     selectTargetLufs: document.getElementById("selectTargetLufs"),
@@ -56,6 +67,18 @@
     return String(s || "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[m]));
   }
 
+  function markPreviewDirty() {
+    state.previewDirty = true;
+    state.previewUrl = null;
+    if (state.abMode === "boosted") {
+      state.abMode = "original";
+      updateAbButtons();
+      syncPlayerSource();
+    }
+    if (el.statOutLufs) el.statOutLufs.textContent = "";
+    if (el.statOutPeak) el.statOutPeak.textContent = "";
+  }
+
   function init() {
     el.dropzone.addEventListener("click", () => el.fileInput.click());
     el.fileInput.addEventListener("change", (e) => {
@@ -72,7 +95,7 @@
 
     el.selectAll.addEventListener("change", (e) => {
       if (e.target.checked) state.mediaList.forEach((m) => state.selectedIds.add(m.id));
-      else state.selectedIds.clear();
+      else state.mediaList.forEach((m) => state.selectedIds.delete(m.id));
       renderMediaList();
       syncCount();
     });
@@ -81,6 +104,7 @@
       state.mediaList = [];
       state.selectedIds.clear();
       state.activeMediaId = null;
+      markPreviewDirty();
       renderMediaList();
       syncCount();
       inspectActiveMedia();
@@ -96,18 +120,42 @@
 
     el.selectTargetLufs.addEventListener("change", (e) => {
       state.config.normalize_target_lufs = e.target.value === "none" ? null : parseFloat(e.target.value);
+      markPreviewDirty();
     });
     el.sliderGainDb.addEventListener("input", (e) => {
       const val = parseFloat(e.target.value);
       state.config.gain_db = val;
       el.valGainDb.textContent = `${val >= 0 ? "+" : ""}${val.toFixed(1)} dB`;
+      markPreviewDirty();
     });
-    el.selectHighpass.addEventListener("change", (e) => { state.config.highpass_hz = parseInt(e.target.value, 10) || 0; });
-    el.chkVoiceClarity.addEventListener("change", (e) => { state.config.voice_clarity = e.target.checked; });
-    el.chkNoiseReduce.addEventListener("change", (e) => { state.config.noise_reduce = e.target.checked; });
-    el.chkLimiter.addEventListener("change", (e) => { state.config.limiter_enabled = e.target.checked; });
+    el.selectHighpass.addEventListener("change", (e) => { state.config.highpass_hz = parseInt(e.target.value, 10) || 0; markPreviewDirty(); });
+    el.chkVoiceClarity.addEventListener("change", (e) => { state.config.voice_clarity = e.target.checked; markPreviewDirty(); });
+    el.chkNoiseReduce.addEventListener("change", (e) => { state.config.noise_reduce = e.target.checked; markPreviewDirty(); });
+    el.chkLimiter.addEventListener("change", (e) => { state.config.limiter_enabled = e.target.checked; markPreviewDirty(); });
     el.selectAudioFmt.addEventListener("change", (e) => { state.config.output_format = e.target.value; });
-    el.selectAudioBitrate.addEventListener("change", (e) => { state.config.bitrate_kbps = parseInt(e.target.value, 10) || 192; });
+    el.selectAudioBitrate.addEventListener("change", (e) => { state.config.bitrate_kbps = parseInt(e.target.value, 10) || 192; markPreviewDirty(); });
+
+    if (el.btnAbOriginal) {
+      el.btnAbOriginal.addEventListener("click", () => {
+        state.abMode = "original";
+        updateAbButtons();
+        syncPlayerSource();
+      });
+    }
+    if (el.btnAbBoosted) {
+      el.btnAbBoosted.addEventListener("click", () => {
+        if (!state.previewUrl || state.previewDirty) {
+          renderAudioPreview(true);
+        } else {
+          state.abMode = "boosted";
+          updateAbButtons();
+          syncPlayerSource();
+        }
+      });
+    }
+    if (el.btnRenderPreview) {
+      el.btnRenderPreview.addEventListener("click", () => renderAudioPreview(true));
+    }
 
     el.processBtn.addEventListener("click", startAudioBatch);
     el.btnCloseModal.addEventListener("click", () => el.modal.classList.remove("open"));
@@ -130,6 +178,91 @@
     el.chkVoiceClarity.checked = state.config.voice_clarity;
     el.chkNoiseReduce.checked = state.config.noise_reduce;
     el.chkLimiter.checked = state.config.limiter_enabled;
+    markPreviewDirty();
+  }
+
+  function updateAbButtons() {
+    if (el.btnAbOriginal) el.btnAbOriginal.classList.toggle("active", state.abMode === "original");
+    if (el.btnAbBoosted) el.btnAbBoosted.classList.toggle("active", state.abMode === "boosted");
+    if (el.previewModeLabel) {
+      el.previewModeLabel.textContent = state.abMode === "boosted" ? "⚡ Boosted & Normalized Preview (15s)" : "Source Original Audio";
+    }
+  }
+
+  function syncPlayerSource() {
+    const active = state.mediaList.find((m) => m.id === state.activeMediaId);
+    if (!active) return;
+
+    if (state.abMode === "boosted" && state.previewUrl) {
+      el.videoPlayer.pause();
+      el.videoPlayer.style.display = "none";
+      el.audioPlayer.style.display = "block";
+      el.audioPlayer.src = state.previewUrl;
+      return;
+    }
+
+    const rawUrl = `/api/uploads/${encodeURIComponent(active.saved_filename)}`;
+    const mediaUrl = window.resolveStudioUrl ? window.resolveStudioUrl(rawUrl) : rawUrl;
+    if (active.media_type === "video") {
+      el.audioPlayer.pause();
+      el.audioPlayer.style.display = "none";
+      el.videoPlayer.style.display = "block";
+      el.videoPlayer.src = mediaUrl;
+    } else {
+      el.videoPlayer.pause();
+      el.videoPlayer.style.display = "none";
+      el.audioPlayer.style.display = "block";
+      el.audioPlayer.src = mediaUrl;
+    }
+  }
+
+  async function renderAudioPreview(autoPlay = false) {
+    const active = state.mediaList.find((m) => m.id === state.activeMediaId);
+    if (!active || !el.btnRenderPreview) return;
+
+    el.btnRenderPreview.disabled = true;
+    el.btnRenderPreview.textContent = "⏳ Rendering…";
+    if (el.previewHint) el.previewHint.textContent = "Rendering FFmpeg loudness & clarity sample (up to 15s)…";
+
+    try {
+      const startSec = active.media_type === "video"
+        ? (el.videoPlayer.currentTime || 0)
+        : (el.audioPlayer.currentTime || 0);
+      const res = await fetch("/api/audio/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          file_id: active.id,
+          config: state.config,
+          start_sec: startSec,
+          session_id: window.STUDIO_TAB_SESSION_ID || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (el.previewHint) el.previewHint.textContent = data.detail || "Could not render preview.";
+        return;
+      }
+      state.previewUrl = data.preview_url;
+      state.previewDirty = false;
+      const outS = data.output_stats || {};
+      if (el.statOutLufs) {
+        el.statOutLufs.textContent = outS.integrated_lufs != null ? `→ Boosted: ${outS.integrated_lufs} LUFS` : "";
+      }
+      if (el.statOutPeak) {
+        el.statOutPeak.textContent = outS.true_peak_db != null ? `→ Peak: ${outS.true_peak_db} dBTP` : "";
+      }
+      state.abMode = "boosted";
+      updateAbButtons();
+      syncPlayerSource();
+      if (autoPlay) {
+        el.audioPlayer.play().catch(() => {});
+      }
+      if (el.previewHint) el.previewHint.textContent = "Toggle Original vs ⚡ Boosted Preview above to A/B test the difference.";
+    } finally {
+      el.btnRenderPreview.disabled = false;
+      el.btnRenderPreview.textContent = "↻ Render 15s Sample";
+    }
   }
 
   async function uploadFiles(files) {
@@ -138,6 +271,10 @@
     if (window.STUDIO_TAB_SESSION_ID) fd.append("session_id", window.STUDIO_TAB_SESSION_ID);
     const res = await fetch("/api/upload-media", { method: "POST", body: fd });
     const data = await res.json();
+    if (!res.ok) {
+      alert(data.detail || "Upload failed.");
+      return;
+    }
     (data.media || []).forEach((m) => {
       if (m.media_type === "audio" || m.media_type === "video") {
         state.mediaList.push(m);
@@ -153,7 +290,7 @@
   function renderMediaList() {
     el.mediaCount.textContent = `${state.mediaList.length} files`;
     if (!state.mediaList.length) {
-      el.mediaList.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:30px 10px;font-size:13px;">No audio/video clips queued.</div>`;
+      el.mediaList.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:36px 10px;font-size:13px;">No audio/video clips queued.</div>`;
       return;
     }
     el.mediaList.innerHTML = "";
@@ -162,7 +299,7 @@
       card.className = `media-card ${m.id === state.activeMediaId ? "active" : ""}`;
       card.innerHTML = `
         <input type="checkbox" class="aud-chk" ${state.selectedIds.has(m.id) ? "checked" : ""}>
-        <div class="media-thumb-wrapper" style="display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--bg-card);">${m.media_type === "video" ? "🎬" : "🎵"}</div>
+        <div class="media-thumb-wrapper" style="display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--bg-card);">${m.thumb_url ? `<img src="${m.thumb_url}" class="media-thumb-img" alt="">` : (m.media_type === "video" ? "🎬" : "🎵")}<span class="media-badge ${m.media_type === "video" ? "vid" : "img"}">${m.media_type === "video" ? "VID" : "AUD"}</span></div>
         <div class="media-info"><div class="media-filename">${escapeHtml(m.filename)}</div><div class="media-meta">${m.duration ? m.duration.toFixed(1) + "s · " : ""}${(m.size_bytes / (1024 * 1024)).toFixed(1)}MB</div></div>
       `;
       card.querySelector(".aud-chk").addEventListener("change", (ev) => {
@@ -173,6 +310,7 @@
       card.addEventListener("click", (ev) => {
         if (ev.target.classList.contains("aud-chk")) return;
         state.activeMediaId = m.id;
+        markPreviewDirty();
         renderMediaList();
         inspectActiveMedia();
       });
@@ -188,7 +326,7 @@
   async function inspectActiveMedia() {
     const active = state.mediaList.find((m) => m.id === state.activeMediaId);
     if (!active) {
-      el.emptyStage.style.display = "block";
+      el.emptyStage.style.display = "flex";
       el.inspectorCard.style.display = "none";
       el.activeTitle.textContent = "No clip selected";
       el.audioPlayer.pause();
@@ -201,20 +339,10 @@
     el.statLufs.textContent = "Scanning…";
     el.statPeak.textContent = "…";
     el.statFormat.textContent = "…";
-
-    const rawUrl = `/api/uploads/${encodeURIComponent(active.saved_filename)}`;
-    const mediaUrl = window.resolveStudioUrl ? window.resolveStudioUrl(rawUrl) : rawUrl;
-    if (active.media_type === "video") {
-      el.audioPlayer.style.display = "none";
-      el.audioPlayer.pause();
-      el.videoPlayer.style.display = "block";
-      el.videoPlayer.src = mediaUrl;
-    } else {
-      el.videoPlayer.style.display = "none";
-      el.videoPlayer.pause();
-      el.audioPlayer.style.display = "block";
-      el.audioPlayer.src = mediaUrl;
-    }
+    if (el.statDuration) el.statDuration.textContent = "";
+    state.abMode = "original";
+    updateAbButtons();
+    syncPlayerSource();
 
     const res = await fetch("/api/audio/analyze", {
       method: "POST",
@@ -223,9 +351,12 @@
     });
     const data = await res.json();
     const s = data.stats || {};
-    el.statLufs.textContent = s.integrated_lufs !== null && s.integrated_lufs !== undefined ? `${s.integrated_lufs} LUFS` : "Silent / N/A";
+    el.statLufs.textContent = s.integrated_lufs !== null && s.integrated_lufs !== undefined ? `${s.integrated_lufs} LUFS` : "Silent / No Audio";
     el.statPeak.textContent = s.true_peak_db !== null && s.true_peak_db !== undefined ? `${s.true_peak_db} dBTP` : "—";
-    el.statFormat.textContent = `${(s.codec || "audio").toUpperCase()} · ${s.sample_rate ? Math.round(s.sample_rate / 1000) + "kHz" : "—"}`;
+    el.statFormat.textContent = s.has_audio
+      ? `${(s.codec || "audio").toUpperCase()} · ${s.sample_rate ? Math.round(s.sample_rate / 1000) + "kHz" : "—"}`
+      : "NO AUDIO STREAM";
+    if (el.statDuration && s.duration) el.statDuration.textContent = `${Number(s.duration).toFixed(1)}s`;
   }
 
   async function startAudioBatch() {
@@ -247,6 +378,10 @@
       }),
     });
     const data = await res.json();
+    if (!res.ok) {
+      el.jobText.textContent = data.detail || "Could not start audio processing.";
+      return;
+    }
     state.activeJobId = data.job_id;
     pollAudioJob();
   }

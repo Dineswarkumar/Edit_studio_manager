@@ -33,6 +33,7 @@ from engine.color_processor import (
     apply_color_grade_to_video,
     load_cube_lut,
 )
+from engine.video_processor import extract_video_frame
 
 router = APIRouter()
 
@@ -40,6 +41,7 @@ router = APIRouter()
 class ColorPreviewRequest(BaseModel):
     file_id: str
     config: ColorGradeConfig
+    frame_sec: Optional[float] = None
     session_id: Optional[str] = None
 
 
@@ -86,29 +88,52 @@ def preview_color_grade(req: ColorPreviewRequest):
     if not media_item:
         raise HTTPException(status_code=404, detail="Media item not found")
 
-    preview_base = media_item.get("preview_base_filename")
-    if preview_base:
-        src_path = os.path.join(THUMBS_DIR, preview_base)
-    else:
-        src_path = os.path.join(UPLOADS_DIR, media_item["saved_filename"])
+    mtype = media_item.get("media_type")
+    src_path = None
+    frame_key = "base"
+
+    if mtype == "video" and req.frame_sec is not None:
+        sec = round(max(0.0, float(req.frame_sec)), 2)
+        frame_key = f"f{int(round(sec * 100))}"
+        scrub_frame_path = os.path.join(THUMBS_DIR, f"color_src_{media_item['id']}.jpg")
+        video_path = os.path.join(UPLOADS_DIR, media_item["saved_filename"])
+        extract_video_frame(video_path, scrub_frame_path, timestamp_sec=sec)
+        register_session_file(req.session_id, scrub_frame_path)
+        src_path = scrub_frame_path
+
+    if not src_path:
+        preview_base = media_item.get("preview_base_filename") or f"preview_base_{media_item['id']}.jpg"
+        candidate_base = os.path.join(THUMBS_DIR, preview_base)
+        if os.path.isfile(candidate_base):
+            src_path = candidate_base
+        elif mtype == "video":
+            fallback_src = os.path.join(THUMBS_DIR, f"color_src_{media_item['id']}.jpg")
+            video_path = os.path.join(UPLOADS_DIR, media_item["saved_filename"])
+            extract_video_frame(video_path, fallback_src, timestamp_sec=0.5)
+            register_session_file(req.session_id, fallback_src)
+            src_path = fallback_src
+        else:
+            src_path = os.path.join(UPLOADS_DIR, media_item["saved_filename"])
 
     if not os.path.exists(src_path):
         raise HTTPException(status_code=404, detail="Preview source missing")
 
+    # Overwrite deterministic rolling preview paths to prevent orphan JPEG bloat during slider scrubbing
     before_name = f"color_before_{media_item['id']}.jpg"
     before_path = os.path.join(THUMBS_DIR, before_name)
-    if not os.path.exists(before_path):
+    if req.frame_sec is not None or not os.path.exists(before_path):
         apply_color_grade_to_image(src_path, before_path, ColorGradeConfig(), [UPLOADS_DIR], max_dim=1280)
         register_session_file(req.session_id, before_path)
 
-    after_name = f"color_after_{media_item['id']}_{uuid.uuid4().hex[:8]}.jpg"
+    after_name = f"color_after_{media_item['id']}.jpg"
     after_path = os.path.join(THUMBS_DIR, after_name)
     apply_color_grade_to_image(src_path, after_path, req.config, [UPLOADS_DIR], max_dim=1280)
     register_session_file(req.session_id, after_path)
 
+    bust = f"{frame_key}_{uuid.uuid4().hex[:6]}"
     return {
-        "before_url": f"/api/thumbnails/{url_segment(before_name)}",
-        "after_url": f"/api/thumbnails/{url_segment(after_name)}?t={uuid.uuid4().hex[:6]}",
+        "before_url": f"/api/thumbnails/{url_segment(before_name)}?v={bust}",
+        "after_url": f"/api/thumbnails/{url_segment(after_name)}?v={bust}",
     }
 
 

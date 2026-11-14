@@ -290,7 +290,9 @@ class FaceDetector:
                 continue
 
             aspect = bw / float(max(1.0, bh))
-            if aspect < 0.55 or aspect > 1.38:
+            min_aspect = 0.45 if conf >= 0.72 else 0.55
+            max_aspect = 1.48 if conf >= 0.72 else 1.38
+            if aspect < min_aspect or aspect > max_aspect:
                 continue
 
             area_ratio = (bw * bh) / total_area
@@ -664,29 +666,13 @@ class NudeNetDetector:
                 self._session = None
                 return False
 
-    def detect(
+    def _infer_single_orientation(
         self,
         img_bgr: np.ndarray,
-        sensitivity: float = 0.5,
-        allowed_classes: Optional[List[str]] = None,
-        face_boxes: Optional[List[BoundingBox]] = None,
-    ) -> List[BoundingBox]:
-        if img_bgr is None or not self._ensure_loaded() or self._session is None:
-            return []
-
+        conf_threshold: float,
+        active_classes: Set[str],
+    ) -> Tuple[List[List[float]], List[float], List[str]]:
         h_orig, w_orig = img_bgr.shape[:2]
-        if h_orig < 8 or w_orig < 8:
-            return []
-
-        active_classes = set(allowed_classes) if allowed_classes is not None else set(DEFAULT_NSFW_CLASSES)
-        active_classes -= NUDENET_FACE_CLASSES
-        if not active_classes:
-            return []
-
-        # Sensitivity 0..1 maps inversely to confidence threshold (higher sensitivity = lower threshold)
-        sens = max(0.0, min(1.0, float(sensitivity)))
-        conf_threshold = max(0.16, min(0.62, 0.54 - sens * 0.34))
-
         max_size = max(w_orig, h_orig)
         x_pad = max_size - w_orig
         y_pad = max_size - h_orig
@@ -709,7 +695,7 @@ class NudeNetDetector:
         max_scores = scores_mat[np.arange(preds.shape[0]), class_ids]
         keep_mask = max_scores >= conf_threshold
         if not np.any(keep_mask):
-            return []
+            return [], [], []
 
         scale_x = (w_orig + x_pad) / float(self.input_size)
         scale_y = (h_orig + y_pad) / float(self.input_size)
@@ -731,6 +717,61 @@ class NudeNetDetector:
             boxes_xywh.append([x, y, bw_scaled, bh_scaled])
             scores.append(float(score))
             kept_labels.append(cls_name)
+        return boxes_xywh, scores, kept_labels
+
+    def detect(
+        self,
+        img_bgr: np.ndarray,
+        sensitivity: float = 0.5,
+        allowed_classes: Optional[List[str]] = None,
+        face_boxes: Optional[List[BoundingBox]] = None,
+        check_orientations: bool = False,
+    ) -> List[BoundingBox]:
+        if img_bgr is None or not self._ensure_loaded() or self._session is None:
+            return []
+
+        h_orig, w_orig = img_bgr.shape[:2]
+        if h_orig < 8 or w_orig < 8:
+            return []
+
+        active_classes = set(allowed_classes) if allowed_classes is not None else set(DEFAULT_NSFW_CLASSES)
+        active_classes -= NUDENET_FACE_CLASSES
+        if not active_classes:
+            return []
+
+        # Sensitivity 0..1 maps inversely to confidence threshold (higher sensitivity = lower threshold)
+        sens = max(0.0, min(1.0, float(sensitivity)))
+        conf_threshold = max(0.16, min(0.62, 0.54 - sens * 0.34))
+
+        boxes_xywh, scores, kept_labels = self._infer_single_orientation(img_bgr, conf_threshold, active_classes)
+
+        # Recover lying-down / sideways torso poses on single-frame/image scans
+        if check_orientations and (not boxes_xywh or sens >= 0.65):
+            # 90 deg CW: rot(H_r=w_orig, W_r=h_orig), point (rx, ry) -> orig (ry, h_orig - rx)
+            rot90 = cv2.rotate(img_bgr, cv2.ROTATE_90_CLOCKWISE)
+            b90, s90, l90 = self._infer_single_orientation(rot90, conf_threshold, active_classes)
+            for (rx, ry, rw, rh), sc, lbl in zip(b90, s90, l90):
+                ox = ry
+                oy = max(0.0, float(h_orig) - (rx + rw))
+                ow = min(rh, float(w_orig) - ox)
+                oh = min(rw, float(h_orig) - oy)
+                if ow >= 8 and oh >= 8:
+                    boxes_xywh.append([ox, oy, ow, oh])
+                    scores.append(sc)
+                    kept_labels.append(lbl)
+
+            # 270 deg CW (90 CCW): point (rx, ry) -> orig (w_orig - ry, rx)
+            rot270 = cv2.rotate(img_bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            b270, s270, l270 = self._infer_single_orientation(rot270, conf_threshold, active_classes)
+            for (rx, ry, rw, rh), sc, lbl in zip(b270, s270, l270):
+                ox = max(0.0, float(w_orig) - (ry + rh))
+                oy = rx
+                ow = min(rh, float(w_orig) - ox)
+                oh = min(rw, float(h_orig) - oy)
+                if ow >= 8 and oh >= 8:
+                    boxes_xywh.append([ox, oy, ow, oh])
+                    scores.append(sc)
+                    kept_labels.append(lbl)
 
         if not boxes_xywh:
             return []
@@ -975,6 +1016,44 @@ def _compute_smooth_gaussian_blur(roi: np.ndarray, intensity: int) -> np.ndarray
     return cv2.GaussianBlur(roi, (k, k), sigmaX=sigma, sigmaY=sigma)
 
 
+def _resolve_shape_roi(
+    w_img: int,
+    h_img: int,
+    box: BoundingBox,
+    shape: str,
+) -> Tuple[int, int, int, int]:
+    """
+    Compute ROI bounds so geometric shapes ('circle', 'triangle', 'heart') enclose
+    narrow portrait faces cleanly without exposing forehead/chin edges.
+    """
+    pad_x = int(box.w * 0.06)
+    pad_y = int(box.h * 0.06)
+    x1, y1 = max(0, box.x - pad_x), max(0, box.y - pad_y)
+    x2, y2 = min(w_img, box.x2 + pad_x), min(h_img, box.y2 + pad_y)
+
+    if shape == "circle":
+        # Expand shorter axis symmetrically toward a 1:1 enclosing square around face center
+        cur_w = x2 - x1
+        cur_h = y2 - y1
+        target_side = min(max(cur_w, cur_h), max(16, min(w_img, h_img)))
+        cx = int(round((x1 + x2) * 0.5))
+        cy = int(round((y1 + y2) * 0.5))
+        half = target_side // 2
+        x1 = max(0, cx - half)
+        x2 = min(w_img, x1 + target_side)
+        x1 = max(0, x2 - target_side)
+        y1 = max(0, cy - half)
+        y2 = min(h_img, y1 + target_side)
+        y1 = max(0, y2 - target_side)
+    elif shape in ("triangle", "heart"):
+        # Give slightly wider lateral margin so brow/temple corners fit inside tapered top shapes
+        extra_x = int(box.w * 0.08)
+        x1 = max(0, x1 - extra_x)
+        x2 = min(w_img, x2 + extra_x)
+
+    return x1, y1, x2, y2
+
+
 def apply_gaussian_blur(
     img: np.ndarray,
     box: BoundingBox,
@@ -983,10 +1062,7 @@ def apply_gaussian_blur(
     feather: int = 25,
 ) -> np.ndarray:
     h_img, w_img = img.shape[:2]
-    pad_x = int(box.w * 0.06)
-    pad_y = int(box.h * 0.06)
-    x1, y1 = max(0, box.x - pad_x), max(0, box.y - pad_y)
-    x2, y2 = min(w_img, box.x2 + pad_x), min(h_img, box.y2 + pad_y)
+    x1, y1, x2, y2 = _resolve_shape_roi(w_img, h_img, box, shape)
     w_roi, h_roi = x2 - x1, y2 - y1
 
     if w_roi < 4 or h_roi < 4:
@@ -1013,10 +1089,7 @@ def apply_pixelate(
     feather: int = 25,
 ) -> np.ndarray:
     h_img, w_img = img.shape[:2]
-    pad_x = int(box.w * 0.06)
-    pad_y = int(box.h * 0.06)
-    x1, y1 = max(0, box.x - pad_x), max(0, box.y - pad_y)
-    x2, y2 = min(w_img, box.x2 + pad_x), min(h_img, box.y2 + pad_y)
+    x1, y1, x2, y2 = _resolve_shape_roi(w_img, h_img, box, shape)
     w_roi, h_roi = x2 - x1, y2 - y1
 
     if w_roi < 4 or h_roi < 4:
@@ -1331,6 +1404,7 @@ class CensorProcessor:
         sensitivity: float = 0.5,
         face_boxes: Optional[List[BoundingBox]] = None,
         allowed_classes: Optional[List[str]] = None,
+        check_orientations: bool = False,
     ) -> Tuple[List[BoundingBox], str, str]:
         """
         Detect sensitive body parts using NudeNet v3 ONNX when loaded,
@@ -1342,6 +1416,7 @@ class CensorProcessor:
                 sensitivity=sensitivity,
                 allowed_classes=allowed_classes,
                 face_boxes=face_boxes,
+                check_orientations=check_orientations,
             )
             return (
                 boxes,
@@ -1371,6 +1446,7 @@ class CensorProcessor:
             sensitivity=sensitivity,
             face_boxes=faces,
             allowed_classes=allowed_classes,
+            check_orientations=True,
         )
         return boxes
 
@@ -1411,6 +1487,7 @@ class CensorProcessor:
                 sensitivity=nsfw_sensitivity,
                 face_boxes=faces,
                 allowed_classes=nsfw_classes,
+                check_orientations=True,
             )
             boxes.extend(nsfw_boxes)
 

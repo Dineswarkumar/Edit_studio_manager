@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from core.state import (
     OUTPUTS_DIR,
+    THUMBS_DIR,
     UPLOADS_DIR,
     active_job_paths,
     heavy_task_slot,
@@ -28,6 +29,7 @@ from engine.audio_processor import (
     AudioBoostConfig,
     analyze_audio_stats,
     process_audio_file,
+    render_audio_preview_snippet,
     resolve_audio_output_ext,
 )
 
@@ -36,6 +38,13 @@ router = APIRouter()
 
 class AudioInspectRequest(BaseModel):
     file_id: str
+
+
+class AudioPreviewRequest(BaseModel):
+    file_id: str
+    config: AudioBoostConfig
+    start_sec: float = 0.0
+    session_id: Optional[str] = None
 
 
 class AudioProcessRequest(BaseModel):
@@ -54,6 +63,32 @@ def analyze_uploaded_audio(req: AudioInspectRequest):
         raise HTTPException(status_code=404, detail="Media file missing")
     stats = analyze_audio_stats(in_path)
     return {"file_id": req.file_id, "filename": media_item["filename"], "stats": stats}
+
+
+@router.post("/api/audio/preview")
+def preview_boosted_audio(req: AudioPreviewRequest):
+    media_item = uploaded_media.get(req.file_id)
+    if not media_item:
+        raise HTTPException(status_code=404, detail="Media item not found")
+    in_path = os.path.join(UPLOADS_DIR, media_item["saved_filename"])
+    if not os.path.exists(in_path):
+        raise HTTPException(status_code=404, detail="Media file missing")
+
+    prev_name = f"audio_prev_{media_item['id']}.m4a"
+    prev_path = os.path.join(THUMBS_DIR, prev_name)
+    try:
+        res = render_audio_preview_snippet(in_path, prev_path, req.config, start_sec=req.start_sec, duration_sec=15.0)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Preview failed: {exc}")
+
+    register_session_file(req.session_id, prev_path)
+    return {
+        "preview_url": f"/api/thumbnails/{url_segment(prev_name)}?v={uuid.uuid4().hex[:6]}",
+        "input_stats": res["input_stats"],
+        "output_stats": res["output_stats"],
+    }
 
 
 def _audio_batch_worker(job_id: str, file_ids: List[str], config: AudioBoostConfig, session_id: Optional[str] = None):

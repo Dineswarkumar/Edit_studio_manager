@@ -279,12 +279,15 @@
 
   function setPeekingOriginal(peeking) {
     state.peekingOriginal = Boolean(peeking && state.activeMedia);
+    if (state.peekingOriginal) {
+      refreshRawFrameForPeek();
+    }
     if (el.censorOriginalImg) {
       el.censorOriginalImg.style.position = "absolute";
       el.censorOriginalImg.style.pointerEvents = "none";
       el.censorOriginalImg.style.zIndex = "2";
       el.censorOriginalImg.style.objectFit = "contain";
-      el.censorOriginalImg.style.display = (state.peekingOriginal && el.censorOriginalImg.src) ? "block" : "none";
+      el.censorOriginalImg.style.display = (state.peekingOriginal && el.censorOriginalImg.getAttribute("src")) ? "block" : "none";
     }
     if (el.btnPeekOriginal) el.btnPeekOriginal.classList.toggle("active", state.peekingOriginal);
   }
@@ -477,6 +480,7 @@
     if (el.btnZoomIn) el.btnZoomIn.addEventListener("click", () => adjustZoom(0.25));
     if (el.btnToggleGuides) el.btnToggleGuides.addEventListener("click", () => setGuidesVisible(!state.showGuides));
     if (el.btnPeekOriginal) {
+      el.btnPeekOriginal.addEventListener("pointerenter", () => refreshRawFrameForPeek());
       el.btnPeekOriginal.addEventListener("pointerdown", () => setPeekingOriginal(true));
       ["pointerup", "pointerleave", "pointercancel"].forEach(ev =>
         el.btnPeekOriginal.addEventListener(ev, () => setPeekingOriginal(false))
@@ -751,17 +755,20 @@
       const val = parseFloat(e.target.value);
       state.scrubberSec = val;
       el.censorScrubberTimeText.textContent = formatTime(val);
-      refreshRawFrameForPeek();
-      schedulePreview();
+      invalidateRawPeek();
       if (state.activeMedia && state.activeMedia.media_type === "video") {
         if (state.protectionMode === "faces") {
           clearTimeout(state.scrubTimeout);
           state.scrubTimeout = setTimeout(() => detectFaces(val, true), 220);
-        } else if (state.protectionMode === "nsfw") {
+          return;
+        }
+        if (state.protectionMode === "nsfw") {
           clearTimeout(state.scrubTimeout);
           state.scrubTimeout = setTimeout(() => detectNsfw(val, true), 220);
+          return;
         }
       }
+      schedulePreview();
     });
 
     // Mask Type Segmented Selector
@@ -969,7 +976,27 @@
     }
   }
 
+  function formatApiError(errData, fallback) {
+    if (!errData || errData.detail == null) return fallback;
+    if (typeof errData.detail === "string") return errData.detail;
+    if (Array.isArray(errData.detail)) {
+      const parts = errData.detail.map(item => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") {
+          const loc = Array.isArray(item.loc) ? item.loc.slice(1).join(".") : "";
+          const msg = item.msg || JSON.stringify(item);
+          return loc ? `${loc}: ${msg}` : msg;
+        }
+        return String(item);
+      });
+      return parts.join("; ") || fallback;
+    }
+    try { return JSON.stringify(errData.detail); } catch (_) { return fallback; }
+  }
+
   function toApiBox(t) {
+    const safeBrushRadius = Math.min(2000, Math.max(1, Number(t.brush_radius) || 24));
+    const safeEraserRadius = Math.min(2000, Math.max(1, Number(t.eraser_radius) || 24));
     return {
       x: Math.round(t.x),
       y: Math.round(t.y),
@@ -981,9 +1008,9 @@
       landmarks: t.landmarks || [],
       kind: t.kind === "brush" ? "brush" : "box",
       brush_points: t.kind === "brush" && Array.isArray(t.brush_points) ? t.brush_points : null,
-      brush_radius: t.brush_radius || 24,
+      brush_radius: safeBrushRadius,
       eraser_points: t.kind === "brush" && Array.isArray(t.eraser_points) && t.eraser_points.length ? t.eraser_points : null,
-      eraser_radius: t.eraser_radius || null,
+      eraser_radius: safeEraserRadius,
       start_sec: t.start_sec != null ? Number(t.start_sec) : null,
       end_sec: t.end_sec != null ? Number(t.end_sec) : null,
       mask_type: t.mask_type || null
@@ -1252,8 +1279,20 @@
     }
   }
 
+  function invalidateRawPeek() {
+    state.rawPeekKey = null;
+    if (el.censorOriginalImg) {
+      el.censorOriginalImg.removeAttribute("src");
+      el.censorOriginalImg.style.display = "none";
+    }
+  }
+
   async function refreshRawFrameForPeek() {
     if (!state.activeMedia || !el.censorOriginalImg) return;
+    const peekKey = `${state.activeMedia.id}_${Number(state.scrubberSec || 0).toFixed(3)}`;
+    if (state.rawPeekKey === peekKey && el.censorOriginalImg.getAttribute("src")) return;
+    if (state.rawPeekInFlightKey === peekKey) return;
+    state.rawPeekInFlightKey = peekKey;
     try {
       const res = await fetch("/api/censor/preview", {
         method: "POST",
@@ -1269,10 +1308,20 @@
       });
       if (!res.ok) return;
       const data = await res.json();
-      if (data && data.preview_url && el.censorOriginalImg) {
+      const currentKey = state.activeMedia
+        ? `${state.activeMedia.id}_${Number(state.scrubberSec || 0).toFixed(3)}`
+        : null;
+      if (data && data.preview_url && el.censorOriginalImg && currentKey === peekKey) {
+        state.rawPeekKey = peekKey;
         el.censorOriginalImg.src = data.preview_url;
+        if (state.peekingOriginal) {
+          el.censorOriginalImg.style.display = "block";
+        }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (state.rawPeekInFlightKey === peekKey) state.rawPeekInFlightKey = null;
+    }
   }
 
   function switchActiveMedia(fileId) {
@@ -1317,7 +1366,7 @@
     el.censorPreviewImg.style.display = "block";
     el.censorOverlayCanvas.style.display = "block";
 
-    refreshRawFrameForPeek();
+    invalidateRawPeek();
     renderBatchQueue();
     renderTargetsList();
     syncVideoRangeBar();
@@ -1521,7 +1570,7 @@
       el.censorEmptyPrompt.style.display = "none";
       el.censorPreviewImg.style.display = "block";
       el.censorOverlayCanvas.style.display = "block";
-      refreshRawFrameForPeek();
+      invalidateRawPeek();
       renderBatchQueue();
       syncVideoRangeBar();
 
@@ -2125,7 +2174,7 @@
     });
 
     function commitBrushStroke(pts, scaleX, scaleY, naturalW, naturalH) {
-      const natRadius = Math.max(6, Math.round(state.brushSize * ((scaleX + scaleY) / 2)));
+      const natRadius = Math.min(2000, Math.max(6, Math.round(state.brushSize * ((scaleX + scaleY) / 2))));
       const roundedPts = pts.map(([px, py]) => [Math.round(px), Math.round(py)]);
       const recomputeBrushBBox = (target) => {
         const valid = (target.brush_points || []).filter(p => p[0] >= 0 && p[1] >= 0);
@@ -2172,7 +2221,7 @@
     }
 
     function commitEraserStroke(pts, scaleX, scaleY) {
-      const natRadius = Math.max(6, Math.round(state.brushSize * ((scaleX + scaleY) / 2)));
+      const natRadius = Math.min(2000, Math.max(6, Math.round(state.brushSize * ((scaleX + scaleY) / 2))));
       const roundedPts = pts.map(([px, py]) => [Math.round(px), Math.round(py)]);
       const xs = roundedPts.map(p => p[0]);
       const ys = roundedPts.map(p => p[1]);
@@ -2517,7 +2566,7 @@
         let errMessage = `Server error ${res.status}`;
         try {
           const errData = await res.json();
-          if (errData && errData.detail) errMessage = errData.detail;
+          errMessage = formatApiError(errData, errMessage);
         } catch (_) {}
         throw new Error(errMessage);
       }
@@ -2610,7 +2659,7 @@
         let errMessage = `Server error ${res.status}`;
         try {
           const errData = await res.json();
-          if (errData && errData.detail) errMessage = errData.detail;
+          errMessage = formatApiError(errData, errMessage);
         } catch (_) {}
         throw new Error(errMessage);
       }
@@ -2732,7 +2781,7 @@
         let errMessage = `Server error ${res.status}`;
         try {
           const errData = await res.json();
-          if (errData && errData.detail) errMessage = errData.detail;
+          errMessage = formatApiError(errData, errMessage);
         } catch (_) {}
         throw new Error(errMessage);
       }
