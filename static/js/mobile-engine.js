@@ -1591,7 +1591,10 @@
       let bw = (rawBox.w || 0) * scaleX;
       let bh = (rawBox.h || 0) * scaleY;
 
-      if (region === "eyes" && bw > 0 && bh > 0) {
+      const isFaceBox = (Array.isArray(rawBox.landmarks) && rawBox.landmarks.length >= 2) ||
+        rawBox.label === "Face" ||
+        String(rawBox.label || "").startsWith("Face #");
+      if (region === "eyes" && isFaceBox && bw > 0 && bh > 0) {
         if (Array.isArray(rawBox.landmarks) && rawBox.landmarks.length >= 2) {
           const [lx, ly] = [rawBox.landmarks[0][0] * scaleX, rawBox.landmarks[0][1] * scaleY];
           const [rx, ry] = [rawBox.landmarks[1][0] * scaleX, rawBox.landmarks[1][1] * scaleY];
@@ -2750,7 +2753,7 @@
       const body = JSON.parse(options.body || "{}");
       const media = getMediaRecord(body.file_id);
       if (!media) return jsonResponse({ detail: "Media not found" }, 404);
-      const before = await renderMediaBaseCanvas(media, 1080, 0);
+      const before = await renderMediaBaseCanvas(media, 1080, Number(body.frame_sec) || 0);
       const beforeBlob = await canvasToBlob(before.canvas, "image/jpeg", 0.88);
       const beforeUrl = registerBlobUrl(`/api/thumbnails/cb_${media.id}.jpg`, beforeBlob, "before.jpg", "image/jpeg");
 
@@ -2811,6 +2814,16 @@
       if (!media) return jsonResponse({ detail: "Media not found" }, 404);
       const ab = await decodeMediaAudioBuffer(media);
       return jsonResponse({ file_id: media.id, filename: media.filename, stats: measureAudioBufferLufs(ab) });
+    }
+
+    if (clean === "/api/audio/preview" && method === "POST") {
+      const body = JSON.parse(options.body || "{}");
+      const media = getMediaRecord(body.file_id);
+      if (!media) return jsonResponse({ detail: "Media not found" }, 404);
+      const ab = await decodeMediaAudioBuffer(media);
+      const res = await processAudioBufferOffline(ab, body.config || {});
+      const prevUrl = registerBlobUrl(`/api/thumbnails/audio_prev_${media.id}_${Date.now()}.wav`, res.blob, "audio_preview.wav", "audio/wav");
+      return jsonResponse({ preview_url: prevUrl, input_stats: res.inStats, output_stats: res.outStats });
     }
 
     if (clean === "/api/audio/process" && method === "POST") {

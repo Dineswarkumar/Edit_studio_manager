@@ -3661,6 +3661,15 @@ input[type="range"] { accent-color: var(--primary); }
   .color-compare-wrap img {
     max-height: 44vh;
   }
+  .stage-panel .panel-header {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .stage-panel .panel-header .preview-meta {
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+  }
 }
 
 @media (max-width: 400px) {
