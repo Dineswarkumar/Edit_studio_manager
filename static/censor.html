@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy | Frame Studio</title>
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-21">
+  <script src="/js/theme.js?v=studio-redesign-19"></script>
+  <script src="/js/session.js"></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%20%22100%22%20%22100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
+  <style>
+    .target-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      margin-bottom: 6px;
+      font-size: 12px;
+      transition: all var(--transition-fast);
+    }
+    .target-item:hover, .target-item.active {
+      border-color: var(--primary);
+      background: var(--bg-surface-hover);
+    }
+    .target-item.selected-focus {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
+    }
+    .target-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: var(--radius-full);
+      background: var(--bg-surface);
+      color: var(--accent-cyan);
+      font-family: monospace;
+    }
+    .emoji-picker-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .emoji-btn {
+      background: var(--bg-card);
+      border: 2px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 4px;
+      font-size: 24px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--transition-fast);
+    }
+    .emoji-btn:hover, .emoji-btn.active {
+      border-color: var(--primary);
+      background: var(--bg-surface-hover);
+      transform: scale(1.05);
+    }
+    .interactive-canvas-overlay {
+      position: absolute;
+      cursor: crosshair;
+      user-select: none;
+    }
+    .mode-subpanel {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px;
+    }
+    .censor-undo-redo { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+    .censor-undo-redo button { min-width: 40px; padding: 8px 10px; }
+    .censor-detector-note { font-size: 11px; line-height: 1.4; color: var(--text-muted); padding: 8px 10px; background: var(--bg-surface); border-radius: var(--radius-sm); }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="censor-header">
+    <div class="logo-area">
+      <a href="/" class="nav-home-pill" title="Back to Media Suite Hub">← Home</a>
+      <span class="studio-mark" aria-hidden="true">P</span>
+      <h1 class="app-title">Privacy</h1>
+    </div>
+
+    <div class="header-actions">
+      <div class="censor-undo-redo" aria-label="Edit history">
+        <button class="btn-secondary" id="btnCensorUndo" type="button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+        <button class="btn-secondary" id="btnCensorRedo" type="button" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>↷</button>
+      </div>
+      <!-- Dark / Light Theme Toggle -->
+      <button class="theme-toggle-btn" id="btnThemeToggle" title="Toggle Dark / Light Mode">🌙</button>
+
+      <div class="workspace-layouts" role="group" aria-label="Workspace arrangement">
+        <button class="layout-choice active" data-layout="standard" title="Media left, preview center, settings right">Media left</button>
+        <button class="layout-choice" data-layout="reversed" title="Settings left, preview center, media right">Media right</button>
+        <button class="layout-choice" data-layout="focus" title="Wider preview with narrower side panels">Wide preview</button>
+      </div>
+      <button class="btn-primary" id="btnHeaderExport">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+        Export Protected Media
+      </button>
+    </div>
+  </header>
+
+  <!-- 3-Column Studio Workspace -->
+  <div class="studio-container censor-studio-container editor-workspace" data-layout="standard">
+
+    <!-- LEFT COLUMN: Source Media & Diversified Tasks -->
+    <div class="panel workspace-panel media-panel" id="mediaPanel">
+      <div class="panel-header">
+        <h2>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          Media
+        </h2>
+        <button class="panel-collapse" type="button" aria-label="Collapse media panel">−</button>
+        <span id="targetCountBadge" style="font-size: 11px; color: var(--accent-cyan); font-family: monospace;">0 targets</span>
+      </div>
+
+      <div class="panel-content">
+        <!-- Media Dropzone -->
+        <input type="file" id="censorFileInput" accept="video/*,image/*" multiple style="display: none;">
+        <div class="dropzone" id="censorDropzone" style="padding: 18px 12px; cursor: pointer;">
+          <div class="dropzone-icon" style="font-size: 26px;">📁</div>
+          <div class="dropzone-text">Drop Video or Photos (Batch)</div>
+          <div class="dropzone-hint">Brush/box blur custom areas, detect faces/eyes, or scan video</div>
+        </div>
+
+        <!-- Loaded media details -->
+        <div id="mediaDetailsPanel" style="display: none; flex-direction: column; gap: 14px;">
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;">
+            <span id="mediaNameLabel" style="font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;"></span>
+            <span id="mediaDimensionsBadge" style="font-size: 11px; color: var(--accent-emerald);"></span>
+          </div>
+
+          <!-- Batch Image Queue & Multi-Photo Presets -->
+          <div id="censorBatchPanel" class="censor-batch-panel" style="display: none;">
+            <div class="censor-batch-header">
+              <span id="censorBatchCount" style="font-size: 12px; font-weight: 600;">1 photo loaded</span>
+              <div style="display: flex; gap: 6px;">
+                <button class="btn-secondary" id="btnBatchSelectAll" type="button" style="padding: 4px 8px; font-size: 11px;">All</button>
+                <button class="btn-secondary" id="btnAddMoreMedia" type="button" style="padding: 4px 8px; font-size: 11px;">+ Add Photos</button>
+              </div>
+            </div>
+            <div id="censorBatchList" class="censor-batch-list"></div>
+            <div id="batchQuickActions" class="censor-batch-actions">
+              <button class="btn-secondary" id="btnBatchApplyFaces" type="button" title="Detect and mask faces across all selected photos">Face Blur (All)</button>
+              <button class="btn-secondary" id="btnBatchApplyEyes" type="button" title="Detect and mask eyes across all selected photos">Eyes Blur (All)</button>
+              <button class="btn-secondary" id="btnBatchApplyNsfw" type="button" title="Scan NSFW candidate regions across all selected photos">NSFW (All)</button>
+            </div>
+          </div>
+
+          <!-- DIVERSIFIED PROTECTION MODES -->
+          <div>
+            <label class="control-label" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Choose Protection Task</label>
+            <div class="segmented-control" id="protectionModeSegments" style="margin-top: 4px;">
+              <button class="segment-btn active" data-mode="faces">👤 Faces</button>
+              <button class="segment-btn" data-mode="nsfw">🔞 NSFW</button>
+              <button class="segment-btn" data-mode="objects">🎯 Objects</button>
+            </div>
+          </div>
+
+          <!-- 1. FACE MODE PANEL -->
+          <div id="panelFaceMode" class="mode-subpanel">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 12px; font-weight: 700;">Face Tracking Scope</span>
+              <span id="faceScopeBadge" style="font-size: 10px; color: var(--accent-cyan);">Multi-Face</span>
+            </div>
+
+            <div class="segmented-control" style="font-size: 11px;">
+              <button class="segment-btn active" id="btnScopeMultiFace" data-scope="multi">All Faces (Multi)</button>
+              <button class="segment-btn" id="btnScopeSingleFace" data-scope="single">Single Person Focus</button>
+            </div>
+
+            <p id="singleFaceNotice" style="display: none; font-size: 11px; color: var(--accent-cyan); margin: 0; line-height: 1.3;">
+              🎯 <strong>Single Person Focus</strong>: Click a face below or on canvas to track and mask ONLY that individual.
+            </p>
+
+            <button class="btn-primary" id="btnAutoDetectFaces" style="padding: 8px 12px; font-size: 12px; width: 100%;">
+              🔍 Auto-Detect Faces (YuNet)
+            </button>
+          </div>
+
+          <!-- 2. NSFW / SENSITIVE CONTENT PANEL -->
+          <div id="panelNsfwMode" class="mode-subpanel" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 12px; font-weight: 700;">NSFW / Sensitive Shield</span>
+              <span style="font-size: 10px; color: var(--accent-pink);">Skin-region heuristic</span>
+            </div>
+
+            <p class="censor-detector-note">This scan finds skin-colored regions. It is not an NSFW classifier, so review the highlighted areas before export.</p>
+
+            <label class="control-label" style="font-size: 11px;">Sensitivity Threshold</label>
+            <div class="segmented-control" style="font-size: 11px;">
+              <button class="segment-btn" id="btnNsfwLow" data-sens="0.3">Low (30%)</button>
+              <button class="segment-btn active" id="btnNsfwBalanced" data-sens="0.5">Balanced (50%)</button>
+              <button class="segment-btn" id="btnNsfwHigh" data-sens="0.8">Strict (80%)</button>
+            </div>
+
+            <button class="btn-primary" id="btnScanNsfw" style="padding: 8px 12px; font-size: 12px; width: 100%;">
+              🔞 Scan Candidate Regions
+            </button>
+          </div>
+
+          <!-- 3. SPECIFIC OBJECT DETECTION PANEL -->
+          <div id="panelObjectMode" class="mode-subpanel" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 12px; font-weight: 700;">Specific Object Redaction</span>
+              <span style="font-size: 10px; color: var(--accent-cyan);">Draw + motion tracking</span>
+            </div>
+            <p class="censor-detector-note">Motion tracking starts at frame 1. Draw the box at the start of the video for a reliable track; turn tracking off for a fixed mask.</p>
+
+            <label class="control-label" style="font-size: 11px;">Object Type</label>
+            <div class="segmented-control" id="objectTagSegments" style="font-size: 11px;">
+              <button class="segment-btn active" data-tag="License Plate">🚗 Plate</button>
+              <button class="segment-btn" data-tag="Document / Text">📄 Doc</button>
+              <button class="segment-btn" data-tag="Logo / Brand">🏷️ Logo</button>
+              <button class="segment-btn" data-tag="Custom Object">📦 Other</button>
+            </div>
+
+            <button class="btn-primary" id="btnAddManualBox" style="padding: 8px 12px; font-size: 12px; width: 100%;">
+              🎯 Draw Object Box on Canvas
+            </button>
+
+            <label style="font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 4px;">
+              <input type="checkbox" id="checkTrackCustomObject" checked>
+              Motion-track this object across video frames
+            </label>
+          </div>
+
+          <!-- Video Scrubber (Visible for videos) -->
+          <div id="censorScrubberPanel" style="display: none; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px;">
+            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px;">
+              <span>Video Timeline Scrubber</span>
+              <span id="censorScrubberTimeText" style="font-family: monospace; color: var(--accent-cyan);">0:00.0</span>
+            </div>
+            <input type="range" id="censorScrubber" min="0" max="100" value="0" step="0.1" style="width: 100%;">
+            <button class="btn-secondary" id="btnScanCurrentFrame" style="width: 100%; margin-top: 8px; padding: 6px; font-size: 11px;">
+              🎯 Scan on Current Frame
+            </button>
+          </div>
+
+          <!-- Target list -->
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span style="font-size: 12px; font-weight: 700;">Protected Targets</span>
+              <button id="btnClearAllTargets" style="background: none; border: none; color: var(--text-dim); font-size: 11px; cursor: pointer;">
+                Clear All
+              </button>
+            </div>
+            <div id="targetsContainer">
+              <div style="text-align: center; color: var(--text-dim); padding: 20px 8px; font-size: 12px;">
+                No targets selected yet.<br>Choose a task above to begin!
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER COLUMN: Interactive Protection Stage -->
+    <div class="panel stage-panel censor-stage-panel workspace-panel" id="previewPanel">
+      <div class="panel-header">
+        <h2>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          Preview
+        </h2>
+        <span id="censorStatusBadge" style="font-size: 12px; color: var(--accent-cyan); font-family: monospace;">Awaiting Media</span>
+      </div>
+
+      <!-- Canvas Drawing & Quick Preset Toolbar -->
+      <div id="censorDrawBar" class="censor-draw-bar" style="display: none;">
+        <div class="draw-bar-group">
+          <span class="draw-bar-label">Tool</span>
+          <div class="segmented-control" id="drawToolSegments">
+            <button class="segment-btn active" data-tool="box" id="btnToolBox" type="button" title="Drag a rectangle to blur or pixelate">▭ Box</button>
+            <button class="segment-btn" data-tool="brush" id="btnToolBrush" type="button" title="Paint freehand strokes to blur or pixelate">🖌 Brush</button>
+            <button class="segment-btn" data-tool="select" id="btnToolSelect" type="button" title="Click, move, or resize existing boxes">👆 Select</button>
+          </div>
+        </div>
+        <div class="draw-bar-group" id="brushSizeGroup" style="display: none;">
+          <span class="draw-bar-label">Size</span>
+          <input type="range" id="sliderBrushSize" min="8" max="96" value="28" style="width: 84px;">
+          <span id="brushSizeVal" class="val-badge" style="min-width: 36px; text-align: center;">28px</span>
+        </div>
+        <div class="draw-bar-group" id="quickPhotoPresetsGroup">
+          <button class="btn-secondary" id="btnQuickFacePreset" type="button" style="padding: 5px 10px; font-size: 11px;" title="Auto-detect and blur faces on this image">Face Blur</button>
+          <button class="btn-secondary" id="btnQuickEyesPreset" type="button" style="padding: 5px 10px; font-size: 11px;" title="Auto-detect and mask eyes on this image">Eyes Blur</button>
+        </div>
+        <div class="draw-bar-group" style="margin-left: auto;">
+          <button class="btn-secondary" id="btnUndoTarget" type="button" style="padding: 5px 10px; font-size: 11px;" title="Undo last target added on this media">Undo</button>
+          <button class="btn-secondary" id="btnClearCurrentTargets" type="button" style="padding: 5px 10px; font-size: 11px;" title="Clear all targets on current media">Clear</button>
+        </div>
+      </div>
+
+      <div class="stage-viewport" id="censorStageViewport">
+        <div class="canvas-wrapper" id="censorCanvasWrapper" style="position: relative; max-width: 100%; max-height: 100%;">
+          <!-- Rendered Mask Preview Image -->
+          <img id="censorPreviewImg" alt="Masked Preview" style="display: none; width: 100%; height: auto; border-radius: var(--radius-sm); user-select: none;">
+          <!-- Interactive canvas overlay for drawing/clicking boxes -->
+          <canvas id="censorOverlayCanvas" class="interactive-canvas-overlay" style="display: none;"></canvas>
+
+          <!-- Empty prompt -->
+          <div id="censorEmptyPrompt" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 380px; color: var(--text-dim); gap: 12px;">
+            <div style="font-size: 48px;">🛡️</div>
+            <div style="font-size: 15px; font-weight: 600;">No Media Loaded</div>
+            <div style="font-size: 12px; max-width: 340px; text-align: center;">
+              Add media to start.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer toolbar -->
+      <div class="stage-footer">
+        <span style="font-size: 12px; color: var(--text-dim);" id="censorHintText">
+          💡 Tip: Click and drag anywhere on the image to create a custom redaction box.
+        </span>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Censor & Mask Styling -->
+    <div class="panel censor-style-panel workspace-panel tools-panel" id="toolsPanel">
+      <div class="panel-header">
+        <h2>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+          Style
+        </h2>
+        <button class="panel-collapse" type="button" aria-label="Collapse tools panel">−</button>
+      </div>
+
+      <div class="panel-content">
+        <!-- Mask Type Segmented Selector -->
+        <div class="control-group">
+          <label class="control-label">Mask Style</label>
+          <div class="segmented-control" id="maskTypeSegments">
+            <button class="segment-btn active" data-type="blur">Blur</button>
+            <button class="segment-btn" data-type="pixelate">Pixelate</button>
+            <button class="segment-btn" data-type="emoji">Emoji</button>
+            <button class="segment-btn" data-type="redact">Redact Bar</button>
+          </div>
+        </div>
+
+        <!-- Mask Shape (Oval vs Rect) -->
+        <div class="control-group" id="groupMaskShape">
+          <label class="control-label">Mask Feather & Shape</label>
+          <div class="segmented-control">
+            <button class="segment-btn active" id="btnShapeOval" data-shape="oval">Oval (Soft Feather)</button>
+            <button class="segment-btn" id="btnShapeRect" data-shape="rect">Rectangular (Solid)</button>
+          </div>
+        </div>
+
+        <div class="control-group" id="groupMaskRegion">
+          <label class="control-label">Mask Area</label>
+          <div class="segmented-control">
+            <button class="segment-btn active" id="btnRegionFace" data-region="face">Full Face</button>
+            <button class="segment-btn" id="btnRegionEyes" data-region="eyes">Eyes Only</button>
+          </div>
+        </div>
+
+        <!-- Blur / Pixelate Intensity Slider -->
+        <div class="control-group" id="groupIntensity">
+          <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+            <label class="control-label" id="labelIntensity">Blur Intensity</label>
+            <span id="intensityVal" style="font-family: monospace; color: var(--accent-cyan);">60%</span>
+          </div>
+          <input type="range" id="sliderIntensity" min="10" max="100" value="60">
+        </div>
+
+        <!-- Emoji Selector Grid -->
+        <div class="control-group" id="groupEmoji" style="display: none;">
+          <label class="control-label">Choose Emoji Mask</label>
+          <div class="emoji-picker-grid">
+            <button class="emoji-btn active" data-emoji="sunglasses" title="Cool Sunglasses">😎</button>
+            <button class="emoji-btn" data-emoji="smiley" title="Smiley">😀</button>
+            <button class="emoji-btn" data-emoji="clown" title="Clown">🤡</button>
+            <button class="emoji-btn" data-emoji="poop" title="Poop Meme">💩</button>
+            <button class="emoji-btn" data-emoji="censored" title="Censored Stamp">🚫</button>
+            <button class="emoji-btn" data-emoji="heart_eyes" title="Heart Eyes">😍</button>
+            <button class="emoji-btn" data-emoji="cat" title="Cat Face">😺</button>
+            <button class="emoji-btn" data-emoji="alien" title="Alien">👽</button>
+            <button class="emoji-btn" data-emoji="robot" title="Robot">🤖</button>
+          </div>
+
+          <div style="margin-top: 12px;">
+            <input type="file" id="customStickerInput" accept="image/*" style="display: none;">
+            <button class="btn-secondary" id="btnUploadCustomSticker" style="width: 100%; padding: 7px; font-size: 11px;">
+              📁 Upload Custom PNG Sticker
+            </button>
+          </div>
+        </div>
+
+        <!-- Redaction Text Input -->
+        <div class="control-group" id="groupRedactText" style="display: none;">
+          <label class="control-label">Stamped Label</label>
+          <input type="text" id="inputRedactText" value="[CENSORED]" placeholder="Leave blank or enter custom text (e.g. [PRIVATE])">
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Progress Modal -->
+  <div class="modal-backdrop" id="censorModal">
+    <div class="modal-dialog" style="max-width: 460px;">
+      <div class="modal-header">
+        <h3 id="modalTitle">
+          <span class="spinner" id="censorModalSpinner"></span>
+          Processing Privacy Shield
+        </h3>
+        <button class="btn-close" id="btnCloseModal" type="button" aria-label="Close">×</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="processing-status-card">
+          <div class="processing-stage-row">
+            <span class="processing-stage-label" id="modalStatusText">Tracking and applying protection...</span>
+            <span class="processing-pct-badge" id="modalPctText">0%</span>
+          </div>
+          <div class="overall-progress-bar">
+            <div class="progress-fill" id="modalProgressBar"></div>
+          </div>
+        </div>
+
+        <div id="modalResultArea" style="display: none; flex-direction: column; gap: 10px; border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+          <div id="modalBatchItemsArea" class="modal-batch-items" style="display: none;"></div>
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <a id="btnDownloadResult" href="#" download class="btn-primary" style="display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; text-decoration: none; font-size: 13px;">
+              Download Protected File
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/censor.js?v=studio-redesign-20"></script>
+  <script src="/js/workspace.js?v=studio-redesign-20"></script>
+</body>
+</html>

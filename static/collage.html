@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collage | Frame Studio</title>
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-21">
+  <script src="/js/theme.js?v=studio-redesign-20"></script>
+  <script src="/js/workspace.js?v=studio-redesign-20"></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>C</text></svg>">
+</head>
+<body>
+  <header>
+    <div class="logo-area">
+      <a href="/" class="nav-home-pill" title="Back to Frame Studio">← Home</a>
+      <span class="studio-mark" aria-hidden="true">C</span>
+      <h1 class="app-title">Collage</h1>
+    </div>
+    <div class="header-actions">
+      <div class="workspace-layouts" role="group" aria-label="Workspace arrangement">
+        <button class="layout-choice active" data-layout="standard" title="Media left, preview center, settings right">Media left</button>
+        <button class="layout-choice" data-layout="reversed" title="Settings left, preview center, media right">Media right</button>
+        <button class="layout-choice" data-layout="focus" title="Wider preview with narrower side panels">Wide preview</button>
+      </div>
+      <button class="theme-toggle-btn" type="button" aria-label="Toggle theme" title="Switch light or dark mode">◐</button>
+      <button class="btn-primary" id="btnExportCollage" type="button" disabled>Download PNG</button>
+    </div>
+  </header>
+
+  <main class="collage-workspace editor-workspace" id="collageWorkspace" data-layout="standard">
+    <section class="panel workspace-panel media-panel" id="mediaPanel">
+      <div class="panel-header">
+        <h2>Photos</h2>
+        <button class="panel-collapse" type="button" aria-label="Collapse media panel" title="Collapse panel">−</button>
+        <span id="collagePhotoCount" class="preview-meta">0 photos</span>
+      </div>
+      <div class="panel-content">
+        <input id="collageImageInput" type="file" accept="image/*" multiple hidden>
+        <button class="dropzone collage-upload" id="collageUploadButton" type="button">
+          <span class="dropzone-icon">＋</span>
+          <span class="dropzone-text">Add photos</span>
+          <span class="dropzone-hint">Drop or choose images</span>
+        </button>
+        <div id="collagePhotoList" class="collage-photo-list">
+          <p class="empty-note">Your photos will appear here.</p>
+        </div>
+        <button class="btn-secondary" id="btnClearPhotos" type="button">Clear photos</button>
+      </div>
+    </section>
+
+    <section class="panel workspace-panel stage-panel" id="previewPanel">
+      <div class="panel-header">
+        <h2>Canvas</h2>
+        <span id="collageCanvasSize" class="preview-meta">1:1 · 1200 × 1200</span>
+      </div>
+      <div class="stage-viewport collage-stage">
+        <canvas id="collageCanvas" aria-label="Live collage canvas"></canvas>
+      </div>
+      <div class="stage-toolbar collage-toolbar">
+        <div class="collage-toolset" role="group" aria-label="Annotation tools">
+          <button class="tool-mode active" data-tool="select" type="button">Select</button>
+          <button class="tool-mode" data-tool="arrange" type="button" title="Drag a photo onto another slot to swap its placement">Arrange photos</button>
+          <button class="tool-mode" data-tool="draw" type="button">Draw</button>
+          <button class="tool-mode" data-tool="rect" type="button">Rectangle</button>
+          <button class="tool-mode" data-tool="ellipse" type="button">Ellipse</button>
+          <button class="tool-mode" data-tool="arrow" type="button">Arrow</button>
+          <button class="tool-mode" data-tool="text" type="button">Text</button>
+        </div>
+        <button class="btn-secondary" id="btnDeleteAnnotation" type="button" disabled>Delete selected</button>
+      </div>
+    </section>
+
+    <section class="panel workspace-panel tools-panel" id="toolsPanel">
+      <div class="panel-header">
+        <h2>Design</h2>
+        <button class="panel-collapse" type="button" aria-label="Collapse settings panel" title="Collapse panel">−</button>
+      </div>
+      <div class="panel-content collage-settings">
+        <section class="control-group">
+          <label class="control-label" for="collageTemplateGrid">Templates</label>
+          <div class="collage-template-grid" id="collageTemplateGrid">
+            <button class="template-choice active" data-template="grid" type="button"><span class="template-icon grid-2">▦</span><span>Even grid</span></button>
+            <button class="template-choice" data-template="hero-left" type="button"><span class="template-icon">▥</span><span>Feature left</span></button>
+            <button class="template-choice" data-template="hero-top" type="button"><span class="template-icon">▤</span><span>Feature top</span></button>
+            <button class="template-choice" data-template="triptych" type="button"><span class="template-icon">▥</span><span>Three panel</span></button>
+            <button class="template-choice" data-template="filmstrip" type="button"><span class="template-icon">▤</span><span>Film strip</span></button>
+            <button class="template-choice" data-template="mosaic" type="button"><span class="template-icon">▦</span><span>Mosaic</span></button>
+            <button class="template-choice" data-template="custom" type="button"><span class="template-icon">✣</span><span>Custom layout</span></button>
+          </div>
+        </section>
+
+        <section class="control-group">
+          <label class="control-label" for="collageRatio">Aspect ratio</label>
+          <select id="collageRatio">
+            <option value="1:1">1:1 · Square</option>
+            <option value="4:3">4:3 · Landscape</option>
+            <option value="3:4">3:4 · Portrait</option>
+            <option value="16:9">16:9 · Wide</option>
+            <option value="9:16">9:16 · Story</option>
+          </select>
+          <label class="control-label" for="collageFitMode">Photo fit</label>
+          <select id="collageFitMode">
+            <option value="cover">Crop to fill</option>
+            <option value="contain">Fit entire photo</option>
+          </select>
+        </section>
+
+        <section class="control-group collage-photo-edit-group">
+          <label class="control-label">Selected photo</label>
+          <label class="collage-slider-label">Photo zoom <span id="collagePhotoZoomValue">100%</span>
+            <input id="collagePhotoZoom" type="range" min="100" max="300" value="100">
+          </label>
+          <input id="collageReplaceInput" type="file" accept="image/*" hidden>
+        </section>
+
+        <section class="control-group">
+          <label class="control-label">Background</label>
+          <div class="collage-control-row">
+            <select id="collageBackgroundMode" aria-label="Background style">
+              <option value="solid">Solid color</option>
+              <option value="gradient">Gradient</option>
+              <option value="image">Image</option>
+            </select>
+            <input id="collageBackgroundColor" type="color" value="#ffffff" aria-label="Background color">
+          </div>
+          <div id="collageGradientControls" class="collage-control-row" hidden>
+            <input id="collageGradientColor" type="color" value="#3b82f6" aria-label="Second gradient color">
+            <select id="collageGradientDirection" aria-label="Gradient direction">
+              <option value="horizontal">Horizontal</option>
+              <option value="vertical">Vertical</option>
+              <option value="diagonal">Diagonal</option>
+            </select>
+          </div>
+          <input id="collageBackgroundInput" type="file" accept="image/*" hidden>
+          <button class="btn-secondary" id="btnChooseBackground" type="button" hidden>Choose background image</button>
+        </section>
+
+        <section class="control-group">
+          <label class="control-label">Frame & spacing</label>
+          <label class="collage-slider-label">Rounded corners <span id="collageRadiusValue">18</span>
+            <input id="collageRadius" type="range" min="0" max="100" value="18">
+          </label>
+          <label class="collage-slider-label">Margin <span id="collageMarginValue">8</span>
+            <input id="collageMargin" type="range" min="0" max="100" value="8">
+          </label>
+          <label class="collage-slider-label">Padding <span id="collagePaddingValue">8</span>
+            <input id="collagePadding" type="range" min="0" max="100" value="8">
+          </label>
+          <div class="collage-control-row">
+            <label class="collage-inline-label">Border <input id="collageBorderColor" type="color" value="#ffffff" aria-label="Border color"></label>
+            <label class="collage-slider-label">Width <span id="collageBorderWidthValue">0</span>
+              <input id="collageBorderWidth" type="range" min="0" max="24" value="0">
+            </label>
+          </div>
+        </section>
+
+        <section class="control-group">
+          <label class="control-label">Annotation style</label>
+          <div class="collage-control-row">
+            <label class="collage-inline-label">Fill <input id="collageFillColor" type="color" value="#2563eb" aria-label="Shape fill color"></label>
+            <label class="collage-inline-label">Line <input id="collageLineColor" type="color" value="#0f172a" aria-label="Line color"></label>
+          </div>
+          <label class="collage-check"><input id="collageFillEnabled" type="checkbox" checked> Fill shapes</label>
+          <label class="collage-slider-label">Line width <span id="collageLineWidthValue">6</span>
+            <input id="collageLineWidth" type="range" min="1" max="32" value="6">
+          </label>
+          <input id="collageTextInput" type="text" value="Your title" aria-label="Text to add">
+          <div class="collage-control-row">
+            <select id="collageFont" aria-label="Font family">
+              <option>Arial</option><option>Georgia</option><option>Impact</option><option>Verdana</option><option>Tahoma</option><option>Courier New</option>
+            </select>
+            <input id="collageTextColor" type="color" value="#ffffff" aria-label="Text color">
+          </div>
+          <label class="collage-check"><input id="collageBold" type="checkbox" checked> Bold text</label>
+        </section>
+      </div>
+    </section>
+  </main>
+  <div class="photo-context-menu" id="collagePhotoContextMenu" role="menu" hidden>
+    <button type="button" role="menuitem" data-photo-action="replace">Replace photo</button>
+    <button type="button" role="menuitem" data-photo-action="rotate-left">Rotate left</button>
+    <button type="button" role="menuitem" data-photo-action="rotate-right">Rotate right</button>
+    <button type="button" role="menuitem" data-photo-action="flip-x">Flip horizontally</button>
+    <button type="button" role="menuitem" data-photo-action="flip-y">Flip vertically</button>
+    <button type="button" role="menuitem" data-photo-action="reset">Reset photo</button>
+    <label class="photo-context-filter">Filter
+      <select id="collagePhotoFilter" aria-label="Photo filter">
+        <option value="original">Original</option><option value="mono">Mono</option><option value="warm">Warm</option>
+        <option value="cool">Cool</option><option value="vintage">Vintage</option><option value="bright">Bright</option>
+      </select>
+    </label>
+  </div>
+  <script src="/js/collage.js?v=studio-redesign-20"></script>
+</body>
+</html>

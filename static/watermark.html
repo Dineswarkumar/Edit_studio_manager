@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watermark | Frame Studio</title>
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-21">
+  <script src="/js/theme.js?v=studio-redesign-19"></script>
+  <script src="/js/session.js"></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%20%22100%22%20%22100%22><text y=%22.9em%22 font-size=%2290%22>💧</text></svg>">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="logo-area">
+      <a href="/" class="nav-home-pill" title="Back to Media Suite Hub">← Home</a>
+      <span class="studio-mark" aria-hidden="true">W</span>
+      <h1 class="app-title">Watermark Studio</h1>
+      <span class="brand-badge">EDITOR</span>
+    </div>
+
+    <div class="header-actions">
+      <!-- Dark / Light Theme Toggle -->
+      <div class="workspace-layouts" role="group" aria-label="Workspace arrangement">
+        <button class="layout-choice active" data-layout="standard" title="Media left, preview center, tools right">Media left</button>
+        <button class="layout-choice" data-layout="reversed" title="Tools left, preview center, media right">Media right</button>
+        <button class="layout-choice" data-layout="focus" title="Wider preview with narrower side panels">Wide preview</button>
+      </div>
+      <button class="theme-toggle-btn" id="btnThemeToggle" title="Toggle Dark / Light Mode" aria-label="Toggle theme">◐</button>
+
+      <button class="btn-primary" id="btnProcessBatch">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Process Media (<span id="selectedCountBadge">0</span>)
+      </button>
+    </div>
+  </header>
+
+  <!-- 3-Column Studio Workspace -->
+  <div class="studio-container editor-workspace" id="watermarkWorkspace" data-layout="standard">
+
+    <!-- LEFT COLUMN: Media Queue & Upload -->
+    <div class="panel workspace-panel media-panel" id="mediaPanel">
+      <div class="panel-header">
+        <h2>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          Media
+        </h2>
+        <button class="panel-collapse" aria-label="Collapse media panel" title="Collapse panel">−</button>
+        <span style="font-size: 11px; color: var(--text-dim);" id="mediaCount">0 files</span>
+      </div>
+
+      <div class="panel-content">
+        <!-- Drag and drop zone -->
+        <div class="dropzone" id="mediaDropzone">
+          <input type="file" id="mediaFileInput" multiple accept="image/*,video/*" style="display: none;">
+          <div class="dropzone-icon">📁</div>
+          <div class="dropzone-text">Drop Images & Videos here</div>
+          <div class="dropzone-hint">Supports JPG, PNG, WEBP, MP4, MOV, MKV</div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 2px 0;">
+          <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" id="selectAllCheckbox" checked> Select All
+          </label>
+          <button id="btnClearMedia" style="background: none; border: none; color: var(--text-dim); font-size: 11px; cursor: pointer;">Clear List</button>
+        </div>
+
+        <!-- Scrollable list of uploaded items -->
+        <div class="media-list" id="mediaList">
+          <!-- Populated dynamically via JS -->
+          <div style="text-align: center; color: var(--text-dim); padding: 30px 10px; font-size: 13px;">
+            No media uploaded yet.<br>Drag and drop files to get started!
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER COLUMN: Interactive Live Canvas Studio -->
+    <div class="panel stage-panel workspace-panel" id="previewPanel">
+      <div class="panel-header">
+        <h2>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          Preview
+        </h2>
+        <span id="canvasDimLabel" style="font-size: 12px; color: var(--text-dim); font-family: monospace;">Select media to preview</span>
+      </div>
+
+      <div class="stage-viewport" id="stageViewport">
+        <div class="canvas-wrapper" id="canvasWrapper">
+          <!-- Image Preview -->
+          <img id="previewImg" class="preview-image" src="" alt="Media Preview" style="display: none;">
+          
+          <!-- Live Interactive Video Player with Watermark Overlay -->
+          <div id="videoContainer" class="video-preview-container" style="display: none;">
+            <video id="previewVideo" playsinline loop muted></video>
+            <img id="videoWatermarkOverlay" class="video-watermark-overlay" alt="">
+            
+            <!-- Sleek floating video controls -->
+            <div class="video-controls-bar">
+              <button id="btnPlayPause" class="video-ctrl-btn" title="Play/Pause">▶</button>
+              <input type="range" id="videoProgress" class="video-progress-slider" min="0" max="100" value="0" step="0.1">
+              <span id="videoTimeDisplay" class="video-time-text">0:00 / 0:00</span>
+              <button id="btnMuteToggle" class="video-ctrl-btn" title="Mute/Unmute">🔇</button>
+            </div>
+          </div>
+
+          <div id="emptyStagePrompt" style="color: var(--text-dim); text-align: center; padding: 60px;">
+            <div style="font-size: 40px; margin-bottom: 12px;">🖼️ 🎬</div>
+            <div style="font-size: 15px; font-weight: 600; color: var(--text-main);">Preview</div>
+            <div style="font-size: 12px; margin-top: 4px;">Add media to start editing</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage-toolbar">
+        <div class="stage-hint-text" style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted);">
+          <span>Drag the watermark on the preview to position it.</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-secondary" id="btnRefreshPreview" style="padding: 6px 12px; font-size: 12px;">Refresh preview</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Watermark Customization Panels -->
+    <div class="panel workspace-panel tools-panel" id="toolsPanel">
+      <div class="panel-header">
+        <h2>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+          Watermark
+        </h2>
+        <button class="panel-collapse" aria-label="Collapse tools panel" title="Collapse panel">−</button>
+      </div>
+
+      <div class="panel-content">
+        <!-- Layer Management Tabs -->
+        <div class="layers-bar">
+          <div class="layers-tabs" id="layersTabs">
+            <!-- Dynamically populated layer tabs -->
+          </div>
+          <div style="display: flex; gap: 4px;">
+            <button class="btn-add-layer" id="btnAddTextLayer" title="Add Text Watermark">+ Text</button>
+            <button class="btn-add-layer" id="btnAddImageLayer" title="Add Image/Logo Watermark">+ Logo</button>
+          </div>
+        </div>
+
+        <!-- Active Layer Settings Form -->
+        <div id="layerEditorArea" style="display: flex; flex-direction: column; gap: 18px;">
+          
+          <!-- Layout Pattern Mode: Single vs Tiled Pattern -->
+          <div class="control-group">
+            <span class="control-label">Layout Mode</span>
+            <div class="segmented-control">
+              <button class="segment-btn active" id="modeSingleBtn" data-mode="single">Single Placement</button>
+              <button class="segment-btn" id="modeTiledBtn" data-mode="tiled">Repeating Tiled Grid</button>
+            </div>
+          </div>
+
+          <!-- SECTION A: Text Specific Settings (Shown when active layer is text) -->
+          <div id="textSettingsGroup" class="control-group">
+            <label class="control-label">Watermark Text</label>
+            <input type="text" id="layerTextInput" value="© Watermark Studio" placeholder="Enter watermark text...">
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+              <div>
+                <label class="control-label">Font Family</label>
+                <select id="layerFontSelect">
+                  <option value="Arial" selected>Arial</option>
+                  <option value="Segoe UI">Segoe UI</option>
+                  <option value="Impact">Impact</option>
+                  <option value="Times New Roman">Times New Roman</option>
+                  <option value="Calibri">Calibri</option>
+                  <option value="Consolas">Consolas (Code)</option>
+                  <option value="Georgia">Georgia</option>
+                  <option value="Verdana">Verdana</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="control-label">Font Size <span class="val-indicator" id="fontSizeVal">36px</span></label>
+                <input type="range" id="layerFontSizeSlider" min="14" max="120" value="36">
+              </div>
+            </div>
+
+            <!-- Colors & Badges -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+              <div>
+                <label class="control-label">Text Color</label>
+                <div class="color-picker-row">
+                  <input type="color" id="layerTextColor" value="#ffffff">
+                  <span id="layerTextColorHex" style="font-size: 12px; font-family: monospace;">#ffffff</span>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; justify-content: center; gap: 6px;">
+                <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                  <input type="checkbox" id="layerBoldCheck"> Bold Font
+                </label>
+                <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                  <input type="checkbox" id="layerShadowCheck" checked> Drop Shadow
+                </label>
+              </div>
+            </div>
+
+            <!-- Background Badge Option -->
+            <div style="background: oklch(0.16 0.02 260); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px; margin-top: 10px;">
+              <label style="font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; cursor: pointer;">
+                <span>Background Badge Box</span>
+                <input type="checkbox" id="layerBgEnableCheck">
+              </label>
+
+              <div id="badgeOptionsPanel" style="display: none; margin-top: 10px; gap: 8px; flex-direction: column;">
+                <div class="color-picker-row">
+                  <span style="font-size: 11px; color: var(--text-dim);">Badge Color:</span>
+                  <input type="color" id="layerBgColor" value="#000000">
+                  <span style="font-size: 11px; color: var(--text-dim);">Opacity:</span>
+                  <input type="range" id="layerBgOpacitySlider" min="10" max="100" value="60" style="flex: 1;">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION B: Image Logo Specific Settings (Shown when active layer is image) -->
+          <div id="imageSettingsGroup" class="control-group" style="display: none;">
+            <label class="control-label">Logo / Image File</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/webp" style="display: none;">
+              <button class="btn-secondary" id="btnUploadLogo" style="flex: 1;">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                Choose Logo Image
+              </button>
+              <div id="logoPreviewThumb" style="width: 42px; height: 42px; border: 1px dashed var(--border-subtle); border-radius: var(--radius-sm); overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000;">
+                <span style="font-size: 10px; color: var(--text-dim);">None</span>
+              </div>
+            </div>
+
+            <div style="margin-top: 12px;">
+              <label class="control-label">Logo Scale <span class="val-indicator" id="logoScaleVal">15%</span></label>
+              <input type="range" id="layerLogoScaleSlider" min="5" max="60" value="15">
+            </div>
+          </div>
+
+          <!-- SECTION C: Common Layout Controls (9-Grid Matrix or Tiled Spacing) -->
+          <div id="singleLayoutControls" class="control-group">
+            <label class="control-label">9-Grid Anchor Position</label>
+            <div class="grid-matrix-container">
+              <button class="matrix-btn" data-pos="top-left" title="Top Left">↖</button>
+              <button class="matrix-btn" data-pos="top-center" title="Top Center">↑</button>
+              <button class="matrix-btn" data-pos="top-right" title="Top Right">↗</button>
+              <button class="matrix-btn" data-pos="middle-left" title="Middle Left">←</button>
+              <button class="matrix-btn" data-pos="center" title="Center">⏺</button>
+              <button class="matrix-btn" data-pos="middle-right" title="Middle Right">→</button>
+              <button class="matrix-btn" data-pos="bottom-left" title="Bottom Left">↙</button>
+              <button class="matrix-btn" data-pos="bottom-center" title="Bottom Center">↓</button>
+              <button class="matrix-btn active" data-pos="bottom-right" title="Bottom Right">↘</button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+              <div>
+                <label class="control-label">Margin X <span class="val-indicator" id="marginXVal">24px</span></label>
+                <input type="range" id="layerMarginXSlider" min="0" max="150" value="24">
+              </div>
+              <div>
+                <label class="control-label">Margin Y <span class="val-indicator" id="marginYVal">24px</span></label>
+                <input type="range" id="layerMarginYSlider" min="0" max="150" value="24">
+              </div>
+            </div>
+          </div>
+
+          <!-- Tiled Mode Grid Spacing (Shown when tiled mode selected) -->
+          <div id="tiledLayoutControls" class="control-group" style="display: none;">
+            <label class="control-label">Tiled Grid Spacing</label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div>
+                <label class="control-label">Spacing X <span class="val-indicator" id="tileSpaceXVal">160px</span></label>
+                <input type="range" id="layerTileSpaceXSlider" min="40" max="400" value="160">
+              </div>
+              <div>
+                <label class="control-label">Spacing Y <span class="val-indicator" id="tileSpaceYVal">120px</span></label>
+                <input type="range" id="layerTileSpaceYSlider" min="40" max="400" value="120">
+              </div>
+            </div>
+            <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 6px;">
+              <input type="checkbox" id="layerTileStaggerCheck" checked> Stagger Alternate Rows (Diagonal)
+            </label>
+          </div>
+
+          <!-- SECTION D: Transform (Opacity & Rotation) -->
+          <div class="control-group">
+            <label class="control-label">Opacity <span class="val-indicator" id="opacityVal">80%</span></label>
+            <input type="range" id="layerOpacitySlider" min="5" max="100" value="80">
+          </div>
+
+          <div class="control-group">
+            <div class="control-label">
+              <span>Rotation Angle</span>
+              <span class="val-indicator" id="rotationVal">0°</span>
+            </div>
+            <input type="range" id="layerRotationSlider" min="-180" max="180" value="0">
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <button class="btn-secondary" style="flex: 1; padding: 4px; font-size: 11px;" onclick="setRotationPreset(0)">0°</button>
+              <button class="btn-secondary" style="flex: 1; padding: 4px; font-size: 11px;" onclick="setRotationPreset(-30)">-30° (Tiled)</button>
+              <button class="btn-secondary" style="flex: 1; padding: 4px; font-size: 11px;" onclick="setRotationPreset(45)">45°</button>
+              <button class="btn-secondary" style="flex: 1; padding: 4px; font-size: 11px;" onclick="setRotationPreset(90)">90°</button>
+            </div>
+          </div>
+
+          <!-- Delete active layer button -->
+          <div style="margin-top: 10px; border-top: 1px solid var(--border-subtle); padding-top: 14px;">
+            <button id="btnDeleteLayer" style="background: transparent; border: 1px solid oklch(0.4 0.1 20); color: var(--accent-rose); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12px; cursor: pointer; width: 100%;">
+              Delete This Layer
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- EXPORT & COMPRESSION OPTIONS MODAL -->
+  <div class="modal-backdrop" id="exportOptionsModal">
+    <div class="modal-dialog" style="max-width: 580px;">
+      <div class="modal-header">
+        <h3 style="font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+          <span>⚙️</span> Export & Compression Settings
+        </h3>
+        <button id="btnCloseExportModal" class="btn-close" type="button" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="modal-body" style="gap: 20px;">
+        <!-- Processing Mode Selector -->
+        <div>
+          <label class="control-label" style="margin-bottom: 8px;">Export Mode</label>
+          <div class="segmented-control">
+            <button class="segment-btn active" id="exportModeBothBtn" data-mode="watermark_and_compress">💧 Watermark + Compress</button>
+            <button class="segment-btn" id="exportModeCompressOnlyBtn" data-mode="compress_only">⚡ Compress Only (No Watermark)</button>
+          </div>
+        </div>
+
+        <!-- Video Compression Quality Presets -->
+        <div>
+          <label class="control-label" style="margin-bottom: 8px;">
+            <span>Video Compression / Quality Target</span>
+            <span style="font-size: 11px; color: var(--accent-cyan);" id="compressionEstimateLabel">~50-65% smaller</span>
+          </label>
+          <div class="preset-cards-grid">
+            <div class="preset-card active" data-preset="balanced">
+              <div class="preset-badge" style="background: var(--accent-emerald); color: #000;">Balanced</div>
+              <div class="preset-title">Optimal Size</div>
+              <div class="preset-desc">~50-65% smaller. Visually indistinguishable.</div>
+            </div>
+            <div class="preset-card" data-preset="master">
+              <div class="preset-badge" style="background: var(--primary); color: #fff;">Master</div>
+              <div class="preset-title">High Quality</div>
+              <div class="preset-desc">Minimal compression, largest file size.</div>
+            </div>
+            <div class="preset-card" data-preset="compressed">
+              <div class="preset-badge" style="background: var(--accent-rose); color: #fff;">Aggressive</div>
+              <div class="preset-title">Max Compression</div>
+              <div class="preset-desc">~75-85% smaller. Ideal for Discord & WhatsApp.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Video Resolution Scaling -->
+        <div>
+          <label class="control-label" style="margin-bottom: 6px;">Video Output Resolution</label>
+          <select id="exportResolutionSelect">
+            <option value="original" selected>Keep Original Resolution (Recommended)</option>
+            <option value="1080p">Downscale to 1080p Full HD (Save massive space from 4K)</option>
+            <option value="720p">Downscale to 720p HD (Great for web & mobile)</option>
+            <option value="480p">Downscale to 480p SD (Smallest possible size)</option>
+          </select>
+        </div>
+
+        <!-- Photo / Picture Quality -->
+        <div>
+          <div class="control-label">
+            <span>Picture / Photo Quality (JPEG & WebP)</span>
+            <span class="val-indicator" id="exportImageQualityVal">85% (Optimized)</span>
+          </div>
+          <input type="range" id="exportImageQualitySlider" min="60" max="98" value="85" style="margin-top: 6px;">
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 4px;">85% quality cuts image file size by ~60% with zero visible artifacts. PNG exports stay lossless.</div>
+        </div>
+
+        <!-- Modal Action Footer -->
+        <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 10px; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
+          <button class="btn-secondary" id="btnCancelExport">Cancel</button>
+          <button class="btn-primary" id="btnConfirmExport">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            Start Processing (<span id="exportModalFileCount">0</span> Files)
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BATCH PROCESSING MODAL / PROGRESS -->
+  <div class="modal-backdrop" id="progressModal">
+    <div class="modal-dialog" style="max-width: 540px;">
+      <div class="modal-header">
+        <h3>
+          <span class="spinner" id="modalSpinner"></span>
+          Batch Watermark Processing
+        </h3>
+        <button class="btn-close" id="btnCloseModal" type="button" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="processing-status-card">
+          <div class="processing-stage-row">
+            <span class="processing-stage-label" id="modalProgressText">Processing items...</span>
+            <span class="processing-pct-badge" id="modalProgressPercent">0%</span>
+          </div>
+          <div class="overall-progress-bar">
+            <div class="progress-fill" id="modalProgressFill"></div>
+          </div>
+        </div>
+
+        <div id="modalItemList" style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Dynamically populated per-file rows -->
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+          <a id="btnDownloadZip" class="btn-primary" href="#" style="display: none; text-decoration: none;">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            Download All (ZIP Archive)
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js?v=studio-redesign-19"></script>
+  <script src="/js/workspace.js?v=studio-redesign-20"></script>
+</body>
+</html>

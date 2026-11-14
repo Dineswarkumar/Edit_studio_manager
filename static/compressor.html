@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Compress | Frame Studio</title>
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-21">
+  <script src="/js/theme.js?v=studio-redesign-19"></script>
+  <script src="/js/session.js"></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%20%22100%22%20%22100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="logo-area">
+      <a href="/" class="nav-home-pill" title="Back to Media Suite Hub">← Home</a>
+      <span class="studio-mark" aria-hidden="true">C</span>
+      <h1 class="app-title">Compress</h1>
+    </div>
+
+    <div class="header-actions">
+      <!-- Dark / Light Theme Toggle -->
+      <button class="theme-toggle-btn" id="btnThemeToggle" title="Toggle Dark / Light Mode">🌙</button>
+
+      <div class="workspace-layouts" role="group" aria-label="Workspace arrangement">
+        <button class="layout-choice active" data-layout="standard" title="Media left, preview center, settings right">Media left</button>
+        <button class="layout-choice" data-layout="reversed" title="Settings left, preview center, media right">Media right</button>
+        <button class="layout-choice" data-layout="focus" title="Wider preview with narrower side panels">Wide preview</button>
+      </div>
+      <button class="btn-primary" id="btnStartCompress" disabled>
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+        Compress Files (<span id="compCountBadge">0</span>)
+      </button>
+    </div>
+  </header>
+
+  <!-- 2-Column Compressor Studio -->
+  <div class="compressor-container editor-workspace" id="compressorWorkspace" data-layout="standard">
+
+    <!-- LEFT: Upload Queue & Savings Dashboard -->
+    <div class="panel workspace-panel media-panel" id="mediaPanel">
+      <div class="panel-header">
+        <h2>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+          Media
+        </h2>
+        <button class="panel-collapse" type="button" aria-label="Collapse media panel">−</button>
+        <span style="font-size: 12px; color: var(--accent-cyan); font-weight: 600;" id="totalInputSizeLabel">Total: 0 MB</span>
+      </div>
+
+      <div class="panel-content">
+        <div class="dropzone" id="compDropzone">
+          <input type="file" id="compFileInput" multiple style="display: none;">
+          <div class="dropzone-icon">📦</div>
+          <div class="dropzone-text">Drop files to compress</div>
+          <div class="dropzone-hint">PDF, DOCX, PPTX, images, video, archives and more</div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 12px; color: var(--text-muted);" id="compQueueCount">0 files ready</span>
+          <button id="btnClearComp" style="background: none; border: none; color: var(--text-dim); font-size: 12px; cursor: pointer;">Clear List</button>
+        </div>
+
+        <div class="media-list" id="compMediaList">
+          <div style="text-align: center; color: var(--text-dim); padding: 40px 10px; font-size: 13px;">
+            No files added yet.<br>Drop heavy videos or photos above!
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace-resizer media-resizer" role="separator" aria-label="Resize media panel"></div>
+
+    <!-- CENTER: Source preview -->
+    <div class="panel stage-panel workspace-panel" id="previewPanel">
+      <div class="panel-header"><h2>Preview</h2><span id="compressPreviewLabel" class="preview-meta">Select a file</span></div>
+      <div class="stage-viewport compressor-preview-viewport">
+        <img id="compressPreviewImg" class="preview-image" alt="Selected media preview" style="display:none;">
+        <video id="compressPreviewVideo" controls playsinline style="display:none;"></video>
+        <div id="compressPreviewEmpty" class="empty-preview">Add media to preview</div>
+      </div>
+    </div>
+
+    <div class="workspace-resizer tools-resizer" role="separator" aria-label="Resize settings panel"></div>
+
+    <!-- RIGHT: Compression & Quality Controls -->
+    <div class="panel workspace-panel tools-panel" id="toolsPanel">
+      <div class="panel-header">
+        <h2>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+          Settings
+        </h2>
+        <button class="panel-collapse" type="button" aria-label="Collapse settings panel">−</button>
+      </div>
+
+      <div class="panel-content" style="gap: 24px;">
+        <!-- Video Quality Presets -->
+        <div class="control-group">
+          <label class="control-label">
+            <span>Video Compression Level</span>
+            <span style="color: var(--accent-emerald);" id="compEstimateText">~50-65% size reduction</span>
+          </label>
+          <p class="control-help">These presets apply to video files only.</p>
+          <div class="preset-cards-grid">
+            <div class="preset-card active" data-preset="balanced">
+              <div class="preset-badge" style="background: var(--accent-emerald); color: #000;">Balanced</div>
+              <div class="preset-title">Optimal Size</div>
+              <div class="preset-desc">~50-65% smaller. Visually identical to original.</div>
+            </div>
+            <div class="preset-card" data-preset="master">
+              <div class="preset-badge" style="background: var(--primary); color: #fff;">Master</div>
+              <div class="preset-title">High Quality</div>
+              <div class="preset-desc">Minimal loss, archive fidelity (~20% smaller).</div>
+            </div>
+            <div class="preset-card" data-preset="compressed">
+              <div class="preset-badge" style="background: var(--accent-rose); color: #fff;">Aggressive</div>
+              <div class="preset-title">Max Shrink</div>
+              <div class="preset-desc">~75-85% smaller. Best for WhatsApp / Discord.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Video Resolution Scaling -->
+        <div class="control-group">
+          <label class="control-label">Video Resolution Target · video only</label>
+          <select id="compResolutionSelect">
+            <option value="original" selected>Keep Original Resolution (Best Sharpness)</option>
+            <option value="1080p">Downscale to 1080p Full HD (Shrinks 4K files by ~70%)</option>
+            <option value="720p">Downscale to 720p HD (Lightweight mobile & web)</option>
+            <option value="480p">Downscale to 480p SD (Ultra-tiny file size)</option>
+          </select>
+        </div>
+
+        <!-- Photo Quality Compression -->
+        <div class="control-group">
+          <label class="control-label">
+            <span>Image & Document Quality</span>
+            <span class="val-indicator" id="compImageQualityVal">85% (Optimized)</span>
+          </label>
+          <input type="range" id="compImageQualitySlider" min="50" max="98" value="85">
+          <div style="font-size: 11px; color: var(--text-dim);">
+            JPEG/WebP images, PDF images and embedded Office images can be re-encoded. Other formats stay lossless; the slider changes compression effort only.
+          </div>
+          <div id="compQualityHint" style="font-size: 11px; color: var(--text-muted);">Choose a file to see which settings apply.</div>
+        </div>
+
+        <!-- Results / Active Progress Area -->
+        <div id="compResultsSection" style="display: none; border-top: 1px solid var(--border-subtle); padding-top: 18px; flex-direction: column; gap: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+              <span class="spinner" id="compSpinner"></span>
+              <span id="compStatusTitle">Compressing Media...</span>
+            </span>
+            <span id="compOverallPct" style="font-weight: 700; color: var(--accent-cyan);">0%</span>
+          </div>
+
+          <div class="overall-progress-bar">
+            <div class="progress-fill" id="compProgressFill"></div>
+          </div>
+
+          <div id="compSummaryBanner" style="display: none; background: var(--bg-card); border: 1px solid var(--accent-emerald); border-radius: var(--radius-md); padding: 12px; font-size: 13px; color: var(--text-main);"></div>
+
+          <div id="compResultList" style="display: flex; flex-direction: column; gap: 8px;"></div>
+
+          <a id="btnCompDownloadZip" class="btn-primary" href="#" style="display: none; text-decoration: none; margin-top: 6px;">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            Download All Compressed (ZIP)
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/js/compressor.js?v=studio-redesign-19"></script>
+  <script src="/js/workspace.js?v=studio-redesign-20"></script>
+</body>
+</html>
