@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Color &amp; LUT Studio — Frame Studio</title>
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-19">
+  <script src="/js/theme.js?v=studio-redesign-19"></script>
+  <script src="/js/vendor/jszip.min.js"></script>
+  <script src="/js/mobile-engine.js"></script>
+  <script src="/js/session.js"></script>
+  <style>
+    .color-compare-wrap {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      max-height: 70vh;
+      user-select: none;
+      line-height: 0;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      background: #0a0c10;
+    }
+    .color-compare-wrap img {
+      max-width: 100%;
+      max-height: 68vh;
+      width: auto;
+      height: auto;
+      display: block;
+      object-fit: contain;
+    }
+    .color-after-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .color-split-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #38bdf8;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.8);
+      pointer-events: none;
+    }
+    .lut-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .lut-chip {
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-size: 12px;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+    }
+    .lut-chip:hover { border-color: #768391; }
+    .lut-chip.active {
+      border-color: var(--accent-cyan);
+      background: rgba(56, 189, 248, 0.14);
+      color: var(--accent-cyan);
+    }
+    .lut-chip small {
+      display: block;
+      font-weight: 400;
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-area">
+      <a href="/" class="nav-home-pill" title="Back to Media Suite Hub">← Home</a>
+      <span class="studio-mark" aria-hidden="true">L</span>
+      <h1 class="app-title">Color &amp; LUT Studio</h1>
+      <span class="brand-badge">GRADING</span>
+    </div>
+    <div class="header-actions">
+      <button class="theme-toggle-btn" id="btnThemeToggle" title="Toggle Dark / Light Mode" aria-label="Toggle theme">◐</button>
+      <button class="btn-secondary" id="btnResetGrade" style="padding: 7px 12px; font-size: 12px;">Reset All</button>
+      <button class="btn-primary" id="btnProcessColorBatch" disabled>
+        Apply &amp; Export (<span id="colorSelectedBadge">0</span>)
+      </button>
+    </div>
+  </header>
+
+  <div class="studio-container editor-workspace">
+    <!-- LEFT: Media Queue -->
+    <div class="panel workspace-panel media-panel">
+      <div class="panel-header">
+        <h2>Media Queue</h2>
+        <span id="colorMediaCount" style="font-size: 12px; color: var(--text-dim);">0 files</span>
+      </div>
+      <div class="panel-content">
+        <div class="upload-dropzone" id="colorDropzone">
+          <div style="font-size: 26px; margin-bottom: 6px;">🎨</div>
+          <div style="font-weight: 600; font-size: 13px;">Add Photos or Videos</div>
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 4px;">JPG, PNG, WebP, MP4, MOV · Batch ready</div>
+          <input type="file" id="colorFileInput" multiple accept="image/*,video/*" style="display: none;">
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" id="colorSelectAll" checked> Select All
+          </label>
+          <button id="btnColorClear" style="background: none; border: none; color: var(--text-dim); font-size: 11px; cursor: pointer;">Clear</button>
+        </div>
+        <div class="media-list" id="colorMediaList">
+          <div style="text-align: center; color: var(--text-dim); padding: 30px 10px; font-size: 13px;">
+            Upload photos or video clips to preview 3D LUT color grades in real time.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER: Live Split Compare Stage -->
+    <div class="panel stage-panel workspace-panel">
+      <div class="panel-header">
+        <h2>Before / After Preview</h2>
+        <span id="colorDimLabel" style="font-size: 12px; color: var(--text-dim); font-family: monospace;">No media selected</span>
+      </div>
+      <div class="stage-viewport">
+        <div class="color-compare-wrap" id="colorCompareWrap" style="display: none;">
+          <img id="colorBeforeImg" src="" alt="Original">
+          <img id="colorAfterImg" class="color-after-overlay" src="" alt="Color Graded">
+          <div class="color-split-line" id="colorSplitLine" style="left: 55%;"></div>
+        </div>
+        <div id="colorEmptyStage" style="color: var(--text-dim); text-align: center; padding: 60px;">
+          <div style="font-size: 40px; margin-bottom: 12px;">🎞️</div>
+          <div style="font-size: 15px; font-weight: 600; color: var(--text-main);">3D LUT &amp; Tone Preview</div>
+          <div style="font-size: 12px; margin-top: 4px;">Drag the split slider below to compare Original vs Graded</div>
+        </div>
+      </div>
+      <div class="stage-toolbar" style="gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+          <span style="font-size: 11px; color: var(--text-dim); white-space: nowrap;">Before / After Split</span>
+          <input type="range" id="colorSplitSlider" min="0" max="100" value="55" style="flex: 1;">
+          <span id="colorSplitVal" style="font-size: 11px; font-family: monospace;">55%</span>
+        </div>
+        <button class="btn-secondary" id="btnColorPeek" style="padding: 5px 12px; font-size: 12px;">👁 Hold Original</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: LUT & Color Controls -->
+    <div class="panel workspace-panel tools-panel">
+      <div class="panel-header">
+        <h2>Look &amp; Tone Controls</h2>
+      </div>
+      <div class="panel-content" style="gap: 14px;">
+        <div class="control-group">
+          <div class="control-label" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>3D LUT Look (.cube)</span>
+            <button type="button" class="btn-secondary" id="btnUploadCustomLut" style="padding: 3px 8px; font-size: 11px;">+ Custom .cube</button>
+            <input type="file" id="customLutInput" accept=".cube" style="display:none;">
+          </div>
+          <div class="lut-grid" id="lutGrid">
+            <button type="button" class="lut-chip active" data-lut="">Original / No LUT<small>Clean manual grade</small></button>
+          </div>
+          <div id="customLutStatus" style="font-size: 11px; color: var(--accent-cyan); display: none;"></div>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">LUT Intensity <span class="val-indicator" id="valLutStrength">100%</span></label>
+          <input type="range" id="sliderLutStrength" min="0" max="100" value="100">
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">Exposure (EV) <span class="val-indicator" id="valExposure">0.00</span></label>
+          <input type="range" id="sliderExposure" min="-2.0" max="2.0" step="0.05" value="0">
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">Contrast <span class="val-indicator" id="valContrast">1.00x</span></label>
+          <input type="range" id="sliderColorContrast" min="0.5" max="1.75" step="0.02" value="1.0">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="control-group">
+            <label class="control-label">Highlights <span class="val-indicator" id="valHighlights">0</span></label>
+            <input type="range" id="sliderHighlights" min="-100" max="100" value="0">
+          </div>
+          <div class="control-group">
+            <label class="control-label">Shadows <span class="val-indicator" id="valShadows">0</span></label>
+            <input type="range" id="sliderShadows" min="-100" max="100" value="0">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="control-group">
+            <label class="control-label">Saturation <span class="val-indicator" id="valSaturation">1.00x</span></label>
+            <input type="range" id="sliderColorSat" min="0.0" max="2.0" step="0.02" value="1.0">
+          </div>
+          <div class="control-group">
+            <label class="control-label">Warmth <span class="val-indicator" id="valTemp">0</span></label>
+            <input type="range" id="sliderTemp" min="-100" max="100" value="0">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="control-group">
+            <label class="control-label">Vignette <span class="val-indicator" id="valColorVignette">0%</span></label>
+            <input type="range" id="sliderColorVignette" min="0" max="100" value="0">
+          </div>
+          <div class="control-group">
+            <label class="control-label">Film Grain <span class="val-indicator" id="valGrain">0%</span></label>
+            <input type="range" id="sliderGrain" min="0" max="100" value="0">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px solid var(--border-subtle); padding-top: 10px;">
+          <div class="control-group">
+            <label class="control-label">Image Format</label>
+            <select id="colorExportFmt">
+              <option value="original" selected>Keep Original</option>
+              <option value="jpg">JPEG</option>
+              <option value="png">PNG</option>
+              <option value="webp">WebP</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label class="control-label">Video Profile</label>
+            <select id="colorVideoPreset">
+              <option value="balanced" selected>Balanced (QSV)</option>
+              <option value="master">High Bitrate Master</option>
+              <option value="compressed">Compact MP4</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress & Results Modal -->
+  <div class="modal-backdrop" id="colorProgressModal">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3 style="margin:0;">Exporting Graded Media</h3>
+        <button class="btn-secondary" id="btnCloseColorModal" style="padding: 4px 10px;">Close</button>
+      </div>
+      <div id="colorJobText" style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Starting batch…</div>
+      <div style="width:100%; height:8px; background:var(--bg-card); border-radius:999px; overflow:hidden; margin: 10px 0;">
+        <div id="colorJobFill" style="height:100%; width:0%; background:var(--accent-cyan); transition: width .2s;"></div>
+      </div>
+      <div id="colorJobItems" style="display:flex; flex-direction:column; gap:6px; max-height:240px; overflow:auto;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+        <a id="btnColorDownloadZip" href="#" download class="btn-primary" style="display:none; text-decoration:none;">📦 Download ZIP Bundle</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/color.js"></script>
+</body>
+</html>

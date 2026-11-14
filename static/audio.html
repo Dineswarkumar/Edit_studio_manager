@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Booster &amp; Normalizer — Frame Studio</title>
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-19">
+  <script src="/js/theme.js?v=studio-redesign-19"></script>
+  <script src="/js/vendor/jszip.min.js"></script>
+  <script src="/js/mobile-engine.js"></script>
+  <script src="/js/session.js"></script>
+  <style>
+    .meter-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      width: 100%;
+    }
+    .meter-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      text-align: center;
+    }
+    .meter-card small {
+      display: block;
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: .6px;
+    }
+    .meter-card strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 16px;
+      font-family: monospace;
+      color: var(--accent-cyan);
+    }
+    .audio-preset-btn.active {
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+      background: rgba(56, 189, 248, 0.12);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-area">
+      <a href="/" class="nav-home-pill" title="Back to Media Suite Hub">← Home</a>
+      <span class="studio-mark" aria-hidden="true">A</span>
+      <h1 class="app-title">Audio Booster &amp; Normalizer</h1>
+      <span class="brand-badge">LOUDNESS</span>
+    </div>
+    <div class="header-actions">
+      <button class="theme-toggle-btn" id="btnThemeToggle" title="Toggle Dark / Light Mode" aria-label="Toggle theme">◐</button>
+      <button class="btn-primary" id="btnProcessAudioBatch" disabled>
+        Boost &amp; Export (<span id="audioSelectedBadge">0</span>)
+      </button>
+    </div>
+  </header>
+
+  <div class="studio-container editor-workspace">
+    <!-- LEFT: Audio / Video Queue -->
+    <div class="panel workspace-panel media-panel">
+      <div class="panel-header">
+        <h2>Audio &amp; Video Queue</h2>
+        <span id="audioMediaCount" style="font-size: 12px; color: var(--text-dim);">0 files</span>
+      </div>
+      <div class="panel-content">
+        <div class="upload-dropzone" id="audioDropzone">
+          <div style="font-size: 26px; margin-bottom: 6px;">🎙️</div>
+          <div style="font-weight: 600; font-size: 13px;">Add Audio or Video Clips</div>
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 4px;">MP3, WAV, M4A, AAC, FLAC, OGG, MP4, MOV</div>
+          <input type="file" id="audioFileInput" multiple accept="audio/*,video/*" style="display: none;">
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label style="font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" id="audioSelectAll" checked> Select All
+          </label>
+          <button id="btnAudioClear" style="background: none; border: none; color: var(--text-dim); font-size: 11px; cursor: pointer;">Clear</button>
+        </div>
+        <div class="media-list" id="audioMediaList">
+          <div style="text-align: center; color: var(--text-dim); padding: 30px 10px; font-size: 13px;">
+            Upload quiet voiceovers, podcasts, or video recordings to boost &amp; normalize loudness.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER: Meter & Player Stage -->
+    <div class="panel stage-panel workspace-panel">
+      <div class="panel-header">
+        <h2>Loudness Analysis &amp; Playback</h2>
+        <span id="audioActiveTitle" style="font-size: 12px; color: var(--text-dim); font-family: monospace;">No clip selected</span>
+      </div>
+      <div class="stage-viewport" style="flex-direction: column; padding: 24px; gap: 20px;">
+        <div id="audioEmptyStage" style="color: var(--text-dim); text-align: center; padding: 40px;">
+          <div style="font-size: 40px; margin-bottom: 12px;">🔊</div>
+          <div style="font-size: 15px; font-weight: 600; color: var(--text-main);">EBU R128 True-Peak &amp; LUFS Analyzer</div>
+          <div style="font-size: 12px; margin-top: 4px;">Inspect integrated loudness before exporting clean, clip-safe audio</div>
+        </div>
+
+        <div id="audioInspectorCard" style="display: none; width: 100%; max-width: 680px; flex-direction: column; gap: 16px;">
+          <div class="meter-grid">
+            <div class="meter-card"><small>Integrated LUFS</small><strong id="statLufs">—</strong></div>
+            <div class="meter-card"><small>True Peak (dBTP)</small><strong id="statPeak">—</strong></div>
+            <div class="meter-card"><small>Format &amp; Rate</small><strong id="statFormat">—</strong></div>
+          </div>
+
+          <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">
+            <div style="font-size: 12px; font-weight: 600; margin-bottom: 8px;">Source Playback Preview</div>
+            <audio id="audioPlayerEl" controls style="width: 100%; display: none;"></audio>
+            <video id="videoAudioPlayerEl" controls playsinline style="width: 100%; max-height: 360px; display: none; border-radius: var(--radius-sm); background:#000;"></video>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Boost & Loudness Controls -->
+    <div class="panel workspace-panel tools-panel">
+      <div class="panel-header">
+        <h2>Boost &amp; Clarity Controls</h2>
+      </div>
+      <div class="panel-content" style="gap: 14px;">
+        <div class="control-group">
+          <label class="control-label">Quick Loudness Presets</label>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <button type="button" class="btn-secondary audio-preset-btn active" data-preset="youtube" style="padding: 5px 10px; font-size: 11px;">YouTube (-14 LUFS)</button>
+            <button type="button" class="btn-secondary audio-preset-btn" data-preset="podcast" style="padding: 5px 10px; font-size: 11px;">Podcast (-16 LUFS)</button>
+            <button type="button" class="btn-secondary audio-preset-btn" data-preset="voice" style="padding: 5px 10px; font-size: 11px;">Voice Clarity (+Boost)</button>
+            <button type="button" class="btn-secondary audio-preset-btn" data-preset="broadcast" style="padding: 5px 10px; font-size: 11px;">Broadcast (-23 LUFS)</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">Normalize Target (EBU R128)</label>
+          <select id="selectTargetLufs">
+            <option value="-14" selected>-14 LUFS (YouTube / Music / Social)</option>
+            <option value="-16">-16 LUFS (Podcasts / Reels)</option>
+            <option value="-23">-23 LUFS (Broadcast TV / EBU Standard)</option>
+            <option value="none">Manual Gain Only (No Normalization)</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">Pre-Gain Boost <span class="val-indicator" id="valGainDb">0.0 dB</span></label>
+          <input type="range" id="sliderGainDb" min="-12" max="24" step="0.5" value="0">
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">Low-Cut Rumble Filter (High-Pass)</label>
+          <select id="selectHighpass">
+            <option value="0" selected>Off (Full Bass)</option>
+            <option value="80">80 Hz (Remove Wind / AC Hum)</option>
+            <option value="120">120 Hz (Crisp Spoken Voice)</option>
+          </select>
+        </div>
+
+        <div class="control-group" style="gap: 8px;">
+          <label style="font-size: 12px; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="chkVoiceClarity"> Voice Clarity EQ (3.2 kHz Presence)
+          </label>
+          <label style="font-size: 12px; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="chkNoiseReduce"> Reduce Background Room Noise (FFT)
+          </label>
+          <label style="font-size: 12px; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="chkLimiter" checked> Clip-Safe True-Peak Limiter (-1.5 dBTP)
+          </label>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px solid var(--border-subtle); padding-top: 10px;">
+          <div class="control-group">
+            <label class="control-label">Output Container</label>
+            <select id="selectAudioFmt">
+              <option value="original" selected>Keep Original (-c:v copy for Video)</option>
+              <option value="mp3">Extract / Save MP3</option>
+              <option value="wav">Lossless WAV</option>
+              <option value="m4a">M4A / AAC</option>
+              <option value="flac">Lossless FLAC</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label class="control-label">Bitrate</label>
+            <select id="selectAudioBitrate">
+              <option value="128">128 kbps</option>
+              <option value="192" selected>192 kbps (Recommended)</option>
+              <option value="256">256 kbps</option>
+              <option value="320">320 kbps (Max)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress Modal -->
+  <div class="modal-backdrop" id="audioProgressModal">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3 style="margin:0;">Audio Processing Results</h3>
+        <button class="btn-secondary" id="btnCloseAudioModal" style="padding: 4px 10px;">Close</button>
+      </div>
+      <div id="audioJobText" style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Starting…</div>
+      <div style="width:100%; height:8px; background:var(--bg-card); border-radius:999px; overflow:hidden; margin: 10px 0;">
+        <div id="audioJobFill" style="height:100%; width:0%; background:var(--accent-cyan); transition: width .2s;"></div>
+      </div>
+      <div id="audioJobItems" style="display:flex; flex-direction:column; gap:6px; max-height:240px; overflow:auto;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+        <a id="btnAudioDownloadZip" href="#" download class="btn-primary" style="display:none; text-decoration:none;">📦 Download ZIP Bundle</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/audio.js"></script>
+</body>
+</html>
