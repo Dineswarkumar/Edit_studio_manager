@@ -4,11 +4,14 @@ let compState = {
   mediaList: [],
   activeMediaId: null,
   activeJobId: null,
+  completedUrlsById: {},
+  splitPct: 50,
   settings: {
     mode: "compress_only",
     video_preset: "balanced",
     video_resolution: "original",
-    image_quality: 85
+    image_quality: 85,
+    target_size_mb: null
   }
 };
 
@@ -35,6 +38,14 @@ const compSummaryBanner = document.getElementById('compSummaryBanner');
 const compResultList = document.getElementById('compResultList');
 const btnCompDownloadZip = document.getElementById('btnCompDownloadZip');
 const compressPreviewImg = document.getElementById('compressPreviewImg');
+const compressAfterImg = document.getElementById('compressAfterImg');
+const compCompareBar = document.getElementById('compCompareBar');
+const compSplitSlider = document.getElementById('compSplitSlider');
+const compCompareStats = document.getElementById('compCompareStats');
+const btnCompPeekOriginal = document.getElementById('btnCompPeekOriginal');
+const compTargetSizeEnabled = document.getElementById('compTargetSizeEnabled');
+const compTargetSizeControls = document.getElementById('compTargetSizeControls');
+const compTargetSizeInput = document.getElementById('compTargetSizeInput');
 const compressPreviewVideo = document.getElementById('compressPreviewVideo');
 const compressPreviewEmpty = document.getElementById('compressPreviewEmpty');
 const compressPreviewLabel = document.getElementById('compressPreviewLabel');
@@ -101,7 +112,49 @@ function bindEvents() {
     compImageQualityVal.innerText = label;
   });
 
+  if (compTargetSizeEnabled && compTargetSizeControls && compTargetSizeInput) {
+    const syncTargetMb = () => {
+      const enabled = compTargetSizeEnabled.checked;
+      compTargetSizeControls.style.display = enabled ? 'flex' : 'none';
+      const val = parseFloat(compTargetSizeInput.value);
+      compState.settings.target_size_mb = (enabled && Number.isFinite(val) && val > 0) ? val : null;
+    };
+    compTargetSizeEnabled.addEventListener('change', syncTargetMb);
+    compTargetSizeInput.addEventListener('input', syncTargetMb);
+    document.querySelectorAll('.comp-size-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        compTargetSizeEnabled.checked = true;
+        compTargetSizeInput.value = btn.dataset.mb || '8';
+        syncTargetMb();
+      });
+    });
+  }
+
+  if (compSplitSlider) {
+    compSplitSlider.addEventListener('input', (e) => {
+      compState.splitPct = parseInt(e.target.value, 10) || 50;
+      applyCompSplit();
+    });
+  }
+  if (btnCompPeekOriginal && compressAfterImg) {
+    btnCompPeekOriginal.addEventListener('pointerdown', () => {
+      compressAfterImg.style.opacity = '0';
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev =>
+      btnCompPeekOriginal.addEventListener(ev, () => {
+        compressAfterImg.style.opacity = '1';
+      })
+    );
+  }
+
   btnStartCompress.addEventListener('click', startCompressionJob);
+}
+
+function applyCompSplit() {
+  if (!compressAfterImg || compressAfterImg.style.display === 'none') return;
+  const pct = Math.max(0, Math.min(100, compState.splitPct));
+  compressAfterImg.style.clipPath = `inset(0 0 0 ${pct}%)`;
+  if (compCompareStats) compCompareStats.innerText = `${pct}% | ${100 - pct}%`;
 }
 
 async function handleUpload(files) {
@@ -207,7 +260,8 @@ function updateCompressorPreview() {
     compQualityHint.innerText = 'Choose a file to see which settings apply.';
     return;
   }
-  const source = `/api/uploads/${encodeURIComponent(media.saved_filename)}`;
+  const rawSource = `/api/uploads/${encodeURIComponent(media.saved_filename)}`;
+  const source = window.resolveStudioUrl ? window.resolveStudioUrl(rawSource) : rawSource;
   compressPreviewLabel.innerText = media.media_type === 'document'
     ? `${media.format_name || 'FILE'} · ${formatBytes(media.size_bytes)}`
     : `${media.width} × ${media.height}`;
@@ -248,6 +302,18 @@ function updateCompressorPreview() {
     compressPreviewVideo.style.display = 'none';
     compressPreviewImg.src = media.preview_url || source;
     compressPreviewImg.style.display = 'block';
+    const doneUrl = compState.completedUrlsById[media.id];
+    if (doneUrl && compressAfterImg && compCompareBar) {
+      compressAfterImg.src = doneUrl;
+      compressAfterImg.style.display = 'block';
+      compCompareBar.style.display = 'flex';
+      if (btnCompPeekOriginal) btnCompPeekOriginal.style.display = 'inline-flex';
+      applyCompSplit();
+    } else {
+      if (compressAfterImg) compressAfterImg.style.display = 'none';
+      if (compCompareBar) compCompareBar.style.display = 'none';
+      if (btnCompPeekOriginal) btnCompPeekOriginal.style.display = 'none';
+    }
   }
 }
 
@@ -330,6 +396,9 @@ function pollCompressionJob() {
 
         let actionBtn = '';
         if (item.status === 'completed') {
+          if (item.file_id && item.download_url) {
+            compState.completedUrlsById[item.file_id] = item.download_url;
+          }
           actionBtn = `<a href="${item.download_url}" download class="btn-secondary" style="padding:4px 10px;font-size:11px;text-decoration:none;color:var(--accent-cyan);border-color:var(--accent-cyan);">Download</a>`;
         } else if (item.status === 'failed') {
           actionBtn = `<span style="color:var(--accent-rose);font-size:11px;">Error</span>`;
@@ -354,9 +423,11 @@ function pollCompressionJob() {
         compStatusTitle.innerText = failedCount
           ? `${completedCount} of ${job.items.length} files compressed; ${failedCount} failed.`
           : `All ${completedCount} files compressed!`;
-        btnCompDownloadZip.href = `/api/download-zip/${compState.activeJobId}`;
+        const rawZipUrl = `/api/download-zip/${compState.activeJobId}`;
+        btnCompDownloadZip.href = window.resolveStudioUrl ? window.resolveStudioUrl(rawZipUrl) : rawZipUrl;
         btnCompDownloadZip.style.display = 'inline-flex';
         btnStartCompress.disabled = false;
+        updateCompressorPreview();
 
         if (totalOrig > 0 && totalComp > 0) {
           const savedTotalPct = Math.round((1 - (totalComp / totalOrig)) * 100);

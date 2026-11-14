@@ -27,8 +27,22 @@
     radius: 18, margin: 8, padding: 8, borderColor: '#ffffff', borderWidth: 0, customSlots: [],
     fillColor: '#2563eb', lineColor: '#0f172a', fillEnabled: true, lineWidth: 6,
     text: 'Your title', font: 'Arial', textColor: '#ffffff', bold: true,
-    annotations: [], selectedAnnotation: -1, pointer: null, replacePhotoIndex: -1
+    activeEmoji: 'sunglasses',
+    exportScale: 2400, exportFormat: 'png',
+    annotations: [], selectedAnnotation: -1, pointer: null, replacePhotoIndex: -1,
+    undoStack: [], redoStack: [], lastSnapshot: null, historyTimer: null
   };
+  const emojiImageCache = new Map();
+
+  function getEmojiImage(emojiId) {
+    const id = emojiId || 'sunglasses';
+    if (emojiImageCache.has(id)) return emojiImageCache.get(id);
+    const img = new Image();
+    img.onload = () => redraw();
+    img.src = `/assets/emojis/${encodeURIComponent(id)}.png`;
+    emojiImageCache.set(id, img);
+    return img;
+  }
 
   function gridSlots(count) {
     if (count <= 1) return [{x:0,y:0,w:1,h:1}];
@@ -176,6 +190,15 @@
       ctx.textBaseline='top'; ctx.lineWidth=Math.max(2,fontSize*.07); ctx.strokeStyle=state.lineColor; ctx.fillStyle=state.textColor;
       const lines=(item.text || state.text).split('\n');
       lines.forEach((line,i)=>{ctx.strokeText(line,x,y+i*fontSize*1.18);ctx.fillText(line,x,y+i*fontSize*1.18);});
+    } else if (item.type === 'emoji') {
+      const rx=Math.min(x,x2),ry=Math.min(y,y2),rw=Math.max(24,Math.abs(x2-x)),rh=Math.max(24,Math.abs(y2-y));
+      const emojiImg = getEmojiImage(item.emojiId);
+      if (emojiImg && emojiImg.complete && emojiImg.naturalWidth > 0) {
+        const scale = Math.min(rw / emojiImg.naturalWidth, rh / emojiImg.naturalHeight);
+        const dw = emojiImg.naturalWidth * scale;
+        const dh = emojiImg.naturalHeight * scale;
+        ctx.drawImage(emojiImg, rx + (rw - dw) / 2, ry + (rh - dh) / 2, dw, dh);
+      }
     }
     if (!state.isExporting && item === state.annotations[state.selectedAnnotation]) {
       ctx.setLineDash([8,6]); ctx.lineWidth=2; ctx.strokeStyle='#2563eb';
@@ -184,18 +207,88 @@
     ctx.restore();
   }
 
-  function redraw() {
-    const width=1200,height=Math.round(width/ratios[state.ratio]);
-    canvas.width=width; canvas.height=height;
-    $('collageCanvasSize').textContent=`${state.ratio} · ${width} × ${height}`;
-    ctx.clearRect(0,0,width,height);
-    const outerRadius=Math.min(width,height)*state.radius/1000;
-    pathRoundRect(0,0,width,height,outerRadius); ctx.save(); ctx.clip();
-    drawBackground(width,height); drawSlots(width,height);
+  function makeCollageSnapshot() {
+    return JSON.stringify({
+      template: state.template, ratio: state.ratio, fitMode: state.fitMode,
+      backgroundMode: state.backgroundMode, background: state.background,
+      gradient: state.gradient, direction: state.direction,
+      radius: state.radius, margin: state.margin, padding: state.padding,
+      borderColor: state.borderColor, borderWidth: state.borderWidth,
+      customSlots: state.customSlots, fillColor: state.fillColor, lineColor: state.lineColor,
+      fillEnabled: state.fillEnabled, lineWidth: state.lineWidth, text: state.text,
+      font: state.font, textColor: state.textColor, bold: state.bold,
+      annotations: state.annotations
+    });
+  }
+
+  function updateCollageHistoryButtons() {
+    if ($('btnCollageUndo')) $('btnCollageUndo').disabled = state.undoStack.length === 0;
+    if ($('btnCollageRedo')) $('btnCollageRedo').disabled = state.redoStack.length === 0;
+  }
+
+  function recordCollageSnapshot() {
+    const snap = makeCollageSnapshot();
+    if (state.lastSnapshot === null) {
+      state.lastSnapshot = snap;
+      updateCollageHistoryButtons();
+      return;
+    }
+    if (snap !== state.lastSnapshot) {
+      state.undoStack.push(state.lastSnapshot);
+      if (state.undoStack.length > 60) state.undoStack.shift();
+      state.redoStack = [];
+      state.lastSnapshot = snap;
+      updateCollageHistoryButtons();
+    }
+  }
+
+  function applyCollageSnapshot(raw) {
+    const snap = JSON.parse(raw);
+    Object.assign(state, snap);
+    state.selectedAnnotation = -1;
+    state.lastSnapshot = raw;
+    if ($('collageRatio')) $('collageRatio').value = state.ratio;
+    if ($('collageFitMode')) $('collageFitMode').value = state.fitMode;
+    document.querySelectorAll('.template-choice').forEach(b => b.classList.toggle('active', b.dataset.template === state.template));
+    updateCollageHistoryButtons();
+    renderAtWidth(1200);
+  }
+
+  function undoCollage() {
+    clearTimeout(state.historyTimer);
+    if (!state.undoStack.length) return;
+    state.redoStack.push(makeCollageSnapshot());
+    applyCollageSnapshot(state.undoStack.pop());
+  }
+
+  function redoCollage() {
+    clearTimeout(state.historyTimer);
+    if (!state.redoStack.length) return;
+    state.undoStack.push(makeCollageSnapshot());
+    applyCollageSnapshot(state.redoStack.pop());
+  }
+
+  function renderAtWidth(widthPx) {
+    const width = widthPx || 1200;
+    const height = Math.round(width / ratios[state.ratio]);
+    canvas.width = width; canvas.height = height;
+    const outW = state.exportScale || 1200;
+    const outH = Math.round(outW / ratios[state.ratio]);
+    $('collageCanvasSize').textContent = `${state.ratio} · Preview ${width}×${height} → Export ${outW}×${outH}`;
+    ctx.clearRect(0, 0, width, height);
+    const outerRadius = Math.min(width, height) * state.radius / 1000;
+    pathRoundRect(0, 0, width, height, outerRadius); ctx.save(); ctx.clip();
+    drawBackground(width, height); drawSlots(width, height);
     state.annotations.forEach(drawAnnotation);
     ctx.restore();
-    $('btnExportCollage').disabled=state.photos.length===0;
-    $('btnDeleteAnnotation').disabled=state.selectedAnnotation<0;
+    $('btnExportCollage').disabled = state.photos.length === 0;
+    $('btnDeleteAnnotation').disabled = state.selectedAnnotation < 0;
+  }
+
+  function redraw() {
+    renderAtWidth(1200);
+    clearTimeout(state.historyTimer);
+    state.historyTimer = setTimeout(recordCollageSnapshot, 220);
   }
 
   function renderPhotos() {
@@ -294,6 +387,22 @@
     if(state.tool==='text'){
       state.annotations.push({type:'text',x:p.x,y:p.y,w:.25,h:.1,text:$('collageTextInput').value||'Text',size:72});
       state.selectedAnnotation=state.annotations.length-1;redraw();return;
+    }
+    if(state.tool==='emoji'){
+      const aspect = canvas.width / Math.max(1, canvas.height);
+      const ew = 0.16;
+      const eh = ew * aspect;
+      state.annotations.push({
+        type:'emoji',
+        emojiId: state.activeEmoji || 'sunglasses',
+        x: Math.max(0, Math.min(1 - ew, p.x - ew / 2)),
+        y: Math.max(0, Math.min(1 - eh, p.y - eh / 2)),
+        w: ew,
+        h: eh
+      });
+      state.selectedAnnotation=state.annotations.length-1;
+      state.pointer={kind:'annotation',start:p,last:p,index:state.selectedAnnotation};
+      redraw();return;
     }
     if(state.tool==='arrange'){
       const photoIndex=photoAtPoint(p);
@@ -418,13 +527,107 @@
   $('collagePhotoZoom').addEventListener('input',event=>{const photo=state.photos[state.selectedPhoto];if(photo){photo.zoom=Number(event.target.value);$('collagePhotoZoomValue').textContent=`${photo.zoom}%`;redraw();}});
   document.querySelectorAll('.tool-mode').forEach(btn=>btn.addEventListener('click',()=>setTool(btn.dataset.tool)));
   $('btnDeleteAnnotation').addEventListener('click',()=>{if(state.selectedAnnotation<0)return;state.annotations.splice(state.selectedAnnotation,1);state.selectedAnnotation=-1;redraw();});
+  if ($('btnCollageUndo')) $('btnCollageUndo').addEventListener('click', undoCollage);
+  if ($('btnCollageRedo')) $('btnCollageRedo').addEventListener('click', redoCollage);
+  document.addEventListener('keydown', event => {
+    const t = event.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (!(event.ctrlKey || event.metaKey)) return;
+    if (event.key.toLowerCase() === 'z' && !event.shiftKey) { event.preventDefault(); undoCollage(); }
+    else if (event.key.toLowerCase() === 'y' || (event.key.toLowerCase() === 'z' && event.shiftKey)) { event.preventDefault(); redoCollage(); }
+  });
+  if ($('collageExportScale')) {
+    state.exportScale = parseInt($('collageExportScale').value, 10) || 2400;
+    $('collageExportScale').addEventListener('change', e => { state.exportScale = parseInt(e.target.value, 10) || 1200; redraw(); });
+  }
+  if ($('collageExportFormat')) {
+    state.exportFormat = $('collageExportFormat').value || 'png';
+    $('collageExportFormat').addEventListener('change', e => { state.exportFormat = e.target.value || 'png'; });
+  }
   $('btnExportCollage').addEventListener('click',()=>{
-    state.isExporting=true;redraw();
+    const fmt = state.exportFormat || 'png';
+    const mime = fmt === 'jpeg' ? 'image/jpeg' : (fmt === 'webp' ? 'image/webp' : 'image/png');
+    const quality = fmt === 'png' ? undefined : 0.94;
+    state.isExporting = true;
+    renderAtWidth(state.exportScale || 1200);
     canvas.toBlob(blob=>{
-      state.isExporting=false;redraw();if(!blob)return;
-      const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`frame-studio-collage-${state.ratio.replace(':','x')}.png`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-    },'image/png');
+      state.isExporting = false;
+      renderAtWidth(1200);
+      if(!blob)return;
+      const url=URL.createObjectURL(blob),link=document.createElement('a');
+      link.href=url;
+      link.download=`frame-studio-collage-${state.ratio.replace(':','x')}-${state.exportScale}w.${fmt}`;
+      link.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }, mime, quality);
   });
 
+  async function loadCollageEmojis() {
+    const grid = $('collageEmojiGrid');
+    if (!grid) return;
+    const fallbackIds = ['sunglasses', 'smiley', 'clown', 'heart_eyes', 'joy', 'fire', 'hundred', 'censored', 'cat'];
+    let items = fallbackIds.map(id => ({ id, label: id, url: `/assets/emojis/${id}.png` }));
+    try {
+      const res = await fetch('/assets/emojis/manifest.json');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.emojis) && data.emojis.length) items = data.emojis;
+      }
+    } catch (_) {}
+    grid.replaceChildren();
+    items.forEach(item => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'emoji-btn';
+      if (item.id === state.activeEmoji) btn.classList.add('active');
+      btn.dataset.emoji = item.id;
+      btn.title = item.label || item.id;
+      const img = document.createElement('img');
+      img.src = item.url || `/assets/emojis/${encodeURIComponent(item.id)}.png`;
+      img.alt = item.label || item.id;
+      btn.appendChild(img);
+      grid.appendChild(btn);
+    });
+    grid.addEventListener('click', event => {
+      const btn = event.target.closest('.emoji-btn');
+      if (!btn) return;
+      grid.querySelectorAll('.emoji-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.activeEmoji = btn.dataset.emoji;
+      getEmojiImage(state.activeEmoji);
+      setTool('emoji');
+    });
+    grid.addEventListener('dblclick', event => {
+      const btn = event.target.closest('.emoji-btn');
+      if (!btn) return;
+      state.activeEmoji = btn.dataset.emoji;
+      addEmojiAtCenter(state.activeEmoji);
+    });
+  }
+
+  function addEmojiAtCenter(emojiId) {
+    const id = emojiId || state.activeEmoji || 'sunglasses';
+    getEmojiImage(id);
+    const aspect = canvas.width / Math.max(1, canvas.height);
+    const ew = 0.18;
+    const eh = ew * aspect;
+    state.annotations.push({
+      type: 'emoji',
+      emojiId: id,
+      x: 0.5 - ew / 2,
+      y: 0.5 - eh / 2,
+      w: ew,
+      h: eh
+    });
+    state.selectedAnnotation = state.annotations.length - 1;
+    setTool('select');
+    redraw();
+  }
+
+  if ($('btnAddEmojiCenter')) {
+    $('btnAddEmojiCenter').addEventListener('click', () => addEmojiAtCenter(state.activeEmoji));
+  }
+
+  loadCollageEmojis();
   renderPhotos();redraw();
 })();

@@ -3300,3 +3300,41 @@ input[type="range"] { accent-color: var(--primary); }
   gap: 8px;
   padding: 6px 10px;
 }
+
+.emoji-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.emoji-btn {
+  background: var(--bg-card);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 6px 4px;
+  min-height: 40px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.emoji-btn img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+}
+
+.emoji-btn:hover,
+.emoji-btn.active {
+  border-color: var(--primary);
+  background: var(--bg-surface-hover);
+  transform: scale(1.04);
+}

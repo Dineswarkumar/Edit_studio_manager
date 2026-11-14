@@ -37,6 +37,9 @@ class WatermarkLayer(BaseModel):
     shadow_enabled: bool = True
     shadow_color: str = "#000000"
     shadow_offset: int = 2
+    stroke_enabled: bool = False
+    stroke_color: str = "#000000"
+    stroke_width: int = 2
     
     bg_enabled: bool = False
     bg_color: str = "#000000"
@@ -58,6 +61,8 @@ class ExportSettings(BaseModel):
     
     # Image compression
     image_quality: int = 85 # 60 - 95
+    # Optional target output file size in MB (triggers bitrate calc for video / quality search for image)
+    target_size_mb: Optional[float] = None
 
 class WatermarkConfig(BaseModel):
     layers: List[WatermarkLayer] = Field(default_factory=list)

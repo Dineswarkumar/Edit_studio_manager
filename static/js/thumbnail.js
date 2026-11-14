@@ -57,7 +57,80 @@
     previewTimeout: null,
     previewAbortController: null,
     scanAbortController: null,
+    exportAbortController: null,
     activeDragTarget: null, // "text" or "sticker"
+  };
+
+  const THUMB_STYLE_PRESETS = {
+    "high-ctr-yellow": {
+      fontFamily: "Impact",
+      fontSize: 96,
+      textColor: "#ffee00",
+      strokeColor: "#000000",
+      strokeWidth: 9,
+      tiltAngle: -3,
+      dropShadow: true,
+      badgeEnabled: false,
+      saturation: 1.3,
+      contrast: 1.18,
+      vignette: 40,
+    },
+    "tech-cyan": {
+      fontFamily: "Segoe UI Bold",
+      fontSize: 84,
+      textColor: "#38bdf8",
+      strokeColor: "#0f172a",
+      strokeWidth: 7,
+      tiltAngle: 0,
+      dropShadow: true,
+      badgeEnabled: true,
+      badgeColor: "#0284c7",
+      badgeOpacity: 0.78,
+      saturation: 1.2,
+      contrast: 1.15,
+      vignette: 30,
+    },
+    "cinema-dark": {
+      fontFamily: "Times New Roman Bold",
+      fontSize: 78,
+      textColor: "#f8fafc",
+      strokeColor: "#09090b",
+      strokeWidth: 4,
+      tiltAngle: 0,
+      dropShadow: true,
+      badgeEnabled: false,
+      saturation: 0.92,
+      contrast: 1.28,
+      vignette: 65,
+    },
+    "vlog-coral": {
+      fontFamily: "Arial Black",
+      fontSize: 90,
+      textColor: "#ffffff",
+      strokeColor: "#111827",
+      strokeWidth: 8,
+      tiltAngle: -4,
+      dropShadow: true,
+      badgeEnabled: true,
+      badgeColor: "#f43f5e",
+      badgeOpacity: 0.88,
+      saturation: 1.25,
+      contrast: 1.12,
+      vignette: 25,
+    },
+    "minimal-white": {
+      fontFamily: "Segoe UI Bold",
+      fontSize: 72,
+      textColor: "#ffffff",
+      strokeColor: "#1e293b",
+      strokeWidth: 2,
+      tiltAngle: 0,
+      dropShadow: true,
+      badgeEnabled: false,
+      saturation: 1.05,
+      contrast: 1.08,
+      vignette: 18,
+    },
   };
 
   // Resolution Map for 6 Aspect Ratios
@@ -136,6 +209,7 @@
     el.selectResolutionScale = document.getElementById("selectResolutionScale");
 
     // Typography & Enhancements
+    el.thumbPresetBtns = document.querySelectorAll(".thumb-preset-btn");
     el.inputThumbText = document.getElementById("inputThumbText");
     el.btnResetTitlePos = document.getElementById("btnResetTitlePos");
     el.selectThumbFont = document.getElementById("selectThumbFont");
@@ -458,10 +532,32 @@
       schedulePreview();
     });
 
+    // Style Presets
+    el.thumbPresetBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const preset = THUMB_STYLE_PRESETS[btn.dataset.preset];
+        if (!preset) return;
+        el.thumbPresetBtns.forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        applyThumbStylePreset(preset);
+      });
+    });
+
     // Export Modal Controls
     el.btnOpenExportModal.addEventListener("click", openExportModal);
-    el.btnCloseThumbExportModal.addEventListener("click", closeExportModal);
-    el.btnCancelThumbExport.addEventListener("click", closeExportModal);
+    el.btnCloseThumbExportModal.addEventListener("click", () => {
+      if (state.isExporting && state.exportAbortController) {
+        state.exportAbortController.abort();
+      }
+      closeExportModal();
+    });
+    el.btnCancelThumbExport.addEventListener("click", () => {
+      if (state.isExporting && state.exportAbortController) {
+        state.exportAbortController.abort();
+        return;
+      }
+      closeExportModal();
+    });
 
     if (el.btnScopeCurrent && el.btnScopeAll) {
       el.btnScopeCurrent.addEventListener("click", () => {
@@ -1273,14 +1369,59 @@
     }
   }
 
+  function applyThumbStylePreset(preset) {
+    state.fontFamily = preset.fontFamily;
+    state.fontSize = preset.fontSize;
+    state.textColor = preset.textColor;
+    state.strokeColor = preset.strokeColor;
+    state.strokeWidth = preset.strokeWidth;
+    state.tiltAngle = preset.tiltAngle;
+    state.dropShadow = preset.dropShadow;
+    state.badgeEnabled = preset.badgeEnabled;
+    if (preset.badgeColor) state.badgeColor = preset.badgeColor;
+    if (preset.badgeOpacity !== undefined) state.badgeOpacity = preset.badgeOpacity;
+    state.saturation = preset.saturation;
+    state.contrast = preset.contrast;
+    state.vignette = preset.vignette;
+
+    if (el.selectThumbFont) el.selectThumbFont.value = state.fontFamily;
+    if (el.sliderThumbFontSize) el.sliderThumbFontSize.value = state.fontSize;
+    if (el.thumbFontSizeVal) el.thumbFontSizeVal.textContent = `${state.fontSize}px`;
+    if (el.pickerThumbColor) el.pickerThumbColor.value = state.textColor;
+    if (el.hexThumbColor) el.hexThumbColor.textContent = state.textColor;
+    if (el.pickerStrokeColor) el.pickerStrokeColor.value = state.strokeColor;
+    if (el.sliderStrokeWidth) el.sliderStrokeWidth.value = state.strokeWidth;
+    if (el.strokeWidthVal) el.strokeWidthVal.textContent = `${state.strokeWidth}px`;
+    if (el.sliderThumbAngle) el.sliderThumbAngle.value = state.tiltAngle;
+    if (el.thumbAngleVal) el.thumbAngleVal.textContent = `${state.tiltAngle}°`;
+    if (el.checkThumbShadow) el.checkThumbShadow.checked = state.dropShadow;
+    if (el.checkThumbBadge) el.checkThumbBadge.checked = state.badgeEnabled;
+    if (el.thumbBadgePanel) el.thumbBadgePanel.style.display = state.badgeEnabled ? "flex" : "none";
+    if (el.pickerThumbBadgeColor) el.pickerThumbBadgeColor.value = state.badgeColor;
+    if (el.sliderThumbBadgeOpacity) el.sliderThumbBadgeOpacity.value = Math.round(state.badgeOpacity * 100);
+    if (el.sliderSaturation) el.sliderSaturation.value = state.saturation;
+    if (el.satVal) el.satVal.textContent = `${state.saturation.toFixed(2)}x`;
+    if (el.sliderContrast) el.sliderContrast.value = state.contrast;
+    if (el.contrastVal) el.contrastVal.textContent = `${state.contrast.toFixed(2)}x`;
+    if (el.sliderVignette) el.sliderVignette.value = state.vignette;
+    if (el.vignetteVal) el.vignetteVal.textContent = `${state.vignette}%`;
+
+    schedulePreview();
+  }
+
   async function executeExport() {
-    if (!state.activeBaseFilename) return;
+    if (!state.activeBaseFilename || state.isExporting) return;
+    if (state.exportAbortController) state.exportAbortController.abort();
+    state.exportAbortController = new AbortController();
+    const signal = state.exportAbortController.signal;
+
     state.isExporting = true;
     syncExportAvailability();
     el.btnDoExportThumb.disabled = true;
     el.btnDoExportThumb.textContent = "⏳ Generating Ultra-Res Thumbnail(s)...";
+    if (el.btnCancelThumbExport) el.btnCancelThumbExport.textContent = "Cancel Export";
     el.thumbExportProgress.hidden = false;
-    el.thumbExportProgressText.textContent = "Rendering high-resolution thumbnail(s)…";
+    el.thumbExportProgressText.textContent = "Step 1/3 · Preparing base composition…";
     el.exportSelectionSummary.setAttribute("aria-busy", "true");
 
     try {
@@ -1291,6 +1432,7 @@
         let mainBaseFilename = state.activeBaseFilename;
         const isCandidateBase = state.candidateFrames.some(c => c.filename === state.activeBaseFilename);
         if (isCandidateBase && state.storyboardFrames.length > 0) {
+          el.thumbExportProgressText.textContent = "Step 1/3 · Building storyboard collage background…";
           const rows = state.gridRows;
           const cols = state.gridCols;
           const fnames = state.storyboardFrames.slice(0, rows * cols).map(c => c.filename);
@@ -1306,11 +1448,11 @@
               border_px: parseInt(el.storyboardBorderPx?.value ?? "0", 10) || 0,
               border_color: "#000000",
               session_id: window.STUDIO_TAB_SESSION_ID || null
-            })
+            }),
+            signal
           });
           if (!sbRes.ok) throw new Error("Failed to build main collage thumbnail");
           const sbData = await sbRes.json();
-          el.thumbExportProgressText.textContent = "Building the main collage thumbnail…";
           mainBaseFilename = sbData.filename;
           state.activeBaseFilename = sbData.filename;
         }
@@ -1318,6 +1460,7 @@
         includeMainThumbnail = true;
       }
 
+      el.thumbExportProgressText.textContent = `Step 2/3 · Rendering ${baseFiles.length} high-res thumbnail${baseFiles.length > 1 ? "s" : ""}…`;
       const payload = {
         ...buildThumbnailDesignPayload(),
         base_image_filenames: baseFiles,
@@ -1328,9 +1471,10 @@
       const res = await fetch("/api/thumbnail/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal
       });
-      el.thumbExportProgressText.textContent = "Preparing downloads…";
+      el.thumbExportProgressText.textContent = "Step 3/3 · Packaging download links…";
       if (!res.ok) throw new Error("Export request failed");
       const data = await res.json();
 
@@ -1384,15 +1528,17 @@
       });
 
       el.btnDoExportThumb.textContent = "✓ Export & Download Complete!";
-      el.btnDoExportThumb.disabled = false;
-      el.thumbExportProgress.hidden = true;
-      el.exportSelectionSummary.removeAttribute("aria-busy");
-      state.isExporting = false;
-      syncExportAvailability();
     } catch (err) {
-      alert("Export failed: " + err.message);
+      if (err.name === "AbortError") {
+        el.btnDoExportThumb.textContent = "Download High-Res Thumbnail";
+      } else {
+        alert("Export failed: " + err.message);
+        el.btnDoExportThumb.textContent = "Retry Export";
+      }
+    } finally {
+      state.exportAbortController = null;
       el.btnDoExportThumb.disabled = false;
-      el.btnDoExportThumb.textContent = "Retry Export";
+      if (el.btnCancelThumbExport) el.btnCancelThumbExport.textContent = "Close";
       el.thumbExportProgress.hidden = true;
       el.exportSelectionSummary.removeAttribute("aria-busy");
       state.isExporting = false;

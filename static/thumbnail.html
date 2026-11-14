@@ -6,6 +6,8 @@
   <title>Thumbnail | Frame Studio</title>
   <link rel="stylesheet" href="/css/style.css?v=studio-redesign-21">
   <script src="/js/theme.js?v=studio-redesign-19"></script>
+  <script src="/js/vendor/jszip.min.js"></script>
+  <script src="/js/mobile-engine.js"></script>
   <script src="/js/session.js"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%20%22100%22%20%22100%22><text y=%22.9em%22 font-size=%2290%22>🖼️</text></svg>">
 </head>
@@ -250,6 +252,18 @@
       </div>
 
       <div class="panel-content" style="gap: 20px;">
+        <!-- Quick Style Presets -->
+        <div class="control-group">
+          <div class="control-label"><span>One-Click Style Presets</span></div>
+          <div id="thumbPresetBar" style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <button type="button" class="btn-secondary thumb-preset-btn" data-preset="high-ctr-yellow" style="padding: 5px 10px; font-size: 0.72rem; border-radius: 999px;">⚡ YouTube Yellow</button>
+            <button type="button" class="btn-secondary thumb-preset-btn" data-preset="tech-cyan" style="padding: 5px 10px; font-size: 0.72rem; border-radius: 999px;">💎 Tech Cyan</button>
+            <button type="button" class="btn-secondary thumb-preset-btn" data-preset="cinema-dark" style="padding: 5px 10px; font-size: 0.72rem; border-radius: 999px;">🎬 Cinema Dark</button>
+            <button type="button" class="btn-secondary thumb-preset-btn" data-preset="vlog-coral" style="padding: 5px 10px; font-size: 0.72rem; border-radius: 999px;">🔥 Vlog Coral</button>
+            <button type="button" class="btn-secondary thumb-preset-btn" data-preset="minimal-white" style="padding: 5px 10px; font-size: 0.72rem; border-radius: 999px;">✨ Minimal White</button>
+          </div>
+        </div>
+
         <!-- Title Text Section -->
         <div class="control-group">
           <label class="control-label">

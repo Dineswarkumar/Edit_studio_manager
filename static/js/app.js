@@ -29,6 +29,9 @@ let state = {
       shadow_enabled: true,
       shadow_color: '#000000',
       shadow_offset: 2,
+      stroke_enabled: false,
+      stroke_color: '#000000',
+      stroke_width: 2,
       bg_enabled: false,
       bg_color: '#000000',
       bg_opacity: 0.5,
@@ -41,6 +44,11 @@ let state = {
   previewDebounceTimer: null,
   activeJobId: null,
   jobPollTimer: null,
+  undoStack: [],
+  redoStack: [],
+  wmZoom: 1,
+  isPeekingOriginal: false,
+  lastRenderedPreviewUrl: null,
   exportSettings: {
     mode: "watermark_and_compress",
     video_preset: "balanced",
@@ -100,6 +108,25 @@ const layerBgEnableCheck = document.getElementById('layerBgEnableCheck');
 const badgeOptionsPanel = document.getElementById('badgeOptionsPanel');
 const layerBgColor = document.getElementById('layerBgColor');
 const layerBgOpacitySlider = document.getElementById('layerBgOpacitySlider');
+const layerStrokeEnableCheck = document.getElementById('layerStrokeEnableCheck');
+const strokeOptionsPanel = document.getElementById('strokeOptionsPanel');
+const layerStrokeColor = document.getElementById('layerStrokeColor');
+const layerStrokeWidthSlider = document.getElementById('layerStrokeWidthSlider');
+const strokeWidthVal = document.getElementById('strokeWidthVal');
+
+const btnWmUndo = document.getElementById('btnWmUndo');
+const btnWmRedo = document.getElementById('btnWmRedo');
+const btnWmZoomOut = document.getElementById('btnWmZoomOut');
+const wmZoomVal = document.getElementById('wmZoomVal');
+const btnWmZoomIn = document.getElementById('btnWmZoomIn');
+const btnWmZoomReset = document.getElementById('btnWmZoomReset');
+const btnWmPeekOriginal = document.getElementById('btnWmPeekOriginal');
+
+const btnSaveWmPreset = document.getElementById('btnSaveWmPreset');
+const savedWmPresetsRow = document.getElementById('savedWmPresetsRow');
+const savedWmPresetsSelect = document.getElementById('savedWmPresetsSelect');
+const btnApplySavedPreset = document.getElementById('btnApplySavedPreset');
+const btnDeleteSavedPreset = document.getElementById('btnDeleteSavedPreset');
 
 const btnUploadLogo = document.getElementById('btnUploadLogo');
 const logoFileInput = document.getElementById('logoFileInput');
@@ -134,8 +161,74 @@ const modalItemList = document.getElementById('modalItemList');
 const btnDownloadZip = document.getElementById('btnDownloadZip');
 
 // Initial Setup
+const WM_PRESETS_STORAGE_KEY = 'wm_studio_saved_presets_v1';
+const WM_BUILTIN_PRESETS = {
+  'subtle-corner': {
+    layout_mode: 'single',
+    position: 'bottom-right',
+    margin_x: 24,
+    margin_y: 24,
+    rotation: 0,
+    opacity: 0.55,
+    font_size: 28,
+    font_bold: false,
+    color: '#ffffff',
+    shadow_enabled: true,
+    stroke_enabled: false,
+    bg_enabled: false,
+  },
+  'diagonal-grid': {
+    layout_mode: 'tiled',
+    tile_spacing_x: 190,
+    tile_spacing_y: 140,
+    tile_stagger: true,
+    rotation: -30,
+    opacity: 0.25,
+    font_size: 34,
+    font_bold: true,
+    color: '#ffffff',
+    shadow_enabled: false,
+    stroke_enabled: false,
+    bg_enabled: false,
+  },
+  'bold-outline': {
+    layout_mode: 'single',
+    position: 'bottom-center',
+    margin_x: 24,
+    margin_y: 36,
+    rotation: 0,
+    opacity: 0.92,
+    font_size: 48,
+    font_bold: true,
+    color: '#facc15',
+    shadow_enabled: true,
+    stroke_enabled: true,
+    stroke_color: '#000000',
+    stroke_width: 4,
+    bg_enabled: false,
+  },
+  'badge-stamp': {
+    layout_mode: 'single',
+    position: 'top-left',
+    margin_x: 20,
+    margin_y: 20,
+    rotation: 0,
+    opacity: 0.9,
+    font_size: 26,
+    font_bold: true,
+    color: '#ffffff',
+    shadow_enabled: false,
+    stroke_enabled: false,
+    bg_enabled: true,
+    bg_color: '#0f172a',
+    bg_opacity: 0.78,
+  },
+};
+
 function init() {
   bindEvents();
+  pushWmHistorySnapshot(false);
+  renderSavedPresetsList();
   renderLayersTabs();
   renderMediaList();
   syncFormToActiveLayer();
@@ -199,6 +292,7 @@ function bindEvents() {
   // 9-grid position matrix
   document.querySelectorAll('.matrix-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      pushWmHistorySnapshot(true);
       document.querySelectorAll('.matrix-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const layer = getActiveLayer();
@@ -208,6 +302,11 @@ function bindEvents() {
   });
 
   // Text inputs & sliders
+  layerTextInput.addEventListener('change', () => pushWmHistorySnapshot(true));
+  layerFontSizeSlider.addEventListener('change', () => pushWmHistorySnapshot(true));
+  layerTextColor.addEventListener('change', () => pushWmHistorySnapshot(true));
+  layerOpacitySlider.addEventListener('change', () => pushWmHistorySnapshot(true));
+  layerRotationSlider.addEventListener('change', () => pushWmHistorySnapshot(true));
   layerTextInput.addEventListener('input', (e) => {
     getActiveLayer().text = e.target.value;
     updateLayerTabTitle();
@@ -256,6 +355,73 @@ function bindEvents() {
     getActiveLayer().bg_opacity = parseInt(e.target.value) / 100.0;
     requestLivePreview();
   });
+
+  if (layerStrokeEnableCheck) {
+    layerStrokeEnableCheck.addEventListener('change', (e) => {
+      pushWmHistorySnapshot(true);
+      getActiveLayer().stroke_enabled = e.target.checked;
+      if (strokeOptionsPanel) strokeOptionsPanel.style.display = e.target.checked ? 'flex' : 'none';
+      requestLivePreview();
+    });
+  }
+  if (layerStrokeColor) {
+    layerStrokeColor.addEventListener('input', (e) => {
+      getActiveLayer().stroke_color = e.target.value;
+      requestLivePreview();
+    });
+    layerStrokeColor.addEventListener('change', () => pushWmHistorySnapshot(true));
+  }
+  if (layerStrokeWidthSlider) {
+    layerStrokeWidthSlider.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10) || 2;
+      if (strokeWidthVal) strokeWidthVal.innerText = `${val}px`;
+      getActiveLayer().stroke_width = val;
+      requestLivePreview();
+    });
+    layerStrokeWidthSlider.addEventListener('change', () => pushWmHistorySnapshot(true));
+  }
+
+  // Undo / Redo + Zoom + Peek + Presets
+  if (btnWmUndo) btnWmUndo.addEventListener('click', wmUndo);
+  if (btnWmRedo) btnWmRedo.addEventListener('click', wmRedo);
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) wmRedo();
+      else wmUndo();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+      e.preventDefault();
+      wmRedo();
+    }
+  });
+
+  if (btnWmZoomOut) btnWmZoomOut.addEventListener('click', () => setWmZoom(state.wmZoom - 0.25));
+  if (btnWmZoomIn) btnWmZoomIn.addEventListener('click', () => setWmZoom(state.wmZoom + 0.25));
+  if (btnWmZoomReset) btnWmZoomReset.addEventListener('click', () => setWmZoom(1));
+
+  if (btnWmPeekOriginal) {
+    const startPeek = () => setPeekOriginal(true);
+    const stopPeek = () => setPeekOriginal(false);
+    btnWmPeekOriginal.addEventListener('mousedown', startPeek);
+    btnWmPeekOriginal.addEventListener('touchstart', startPeek, { passive: true });
+    window.addEventListener('mouseup', stopPeek);
+    window.addEventListener('touchend', stopPeek);
+  }
+
+  document.querySelectorAll('.wm-preset-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const preset = WM_BUILTIN_PRESETS[btn.dataset.preset];
+      if (!preset) return;
+      pushWmHistorySnapshot(true);
+      Object.assign(getActiveLayer(), preset);
+      syncFormToActiveLayer();
+      requestLivePreview(true);
+    });
+  });
+  if (btnSaveWmPreset) btnSaveWmPreset.addEventListener('click', saveCurrentWmPreset);
+  if (btnApplySavedPreset) btnApplySavedPreset.addEventListener('click', applySelectedSavedPreset);
+  if (btnDeleteSavedPreset) btnDeleteSavedPreset.addEventListener('click', deleteSelectedSavedPreset);
 
   // Image logo controls
   btnUploadLogo.addEventListener('click', () => logoFileInput.click());
@@ -476,6 +642,7 @@ function setLayoutMode(mode) {
 }
 
 function addLayer(type) {
+  pushWmHistorySnapshot(true);
   const newId = `layer_${Date.now()}`;
   const newLayer = {
     id: newId,
@@ -500,6 +667,9 @@ function addLayer(type) {
     shadow_enabled: true,
     shadow_color: '#000000',
     shadow_offset: 2,
+    stroke_enabled: false,
+    stroke_color: '#000000',
+    stroke_width: 2,
     bg_enabled: false,
     bg_color: '#000000',
     bg_opacity: 0.5,
@@ -520,6 +690,7 @@ function deleteActiveLayer() {
     alert("You must keep at least one watermark layer.");
     return;
   }
+  pushWmHistorySnapshot(true);
   state.layers = state.layers.filter(l => l.id !== state.activeLayerId);
   state.activeLayerId = state.layers[0].id;
   renderLayersTabs();
@@ -569,13 +740,23 @@ function syncFormToActiveLayer() {
     badgeOptionsPanel.style.display = layer.bg_enabled ? 'flex' : 'none';
     layerBgColor.value = layer.bg_color;
     layerBgOpacitySlider.value = Math.round(layer.bg_opacity * 100);
+    if (layerStrokeEnableCheck) {
+      layerStrokeEnableCheck.checked = !!layer.stroke_enabled;
+      if (strokeOptionsPanel) strokeOptionsPanel.style.display = layer.stroke_enabled ? 'flex' : 'none';
+      if (layerStrokeColor) layerStrokeColor.value = layer.stroke_color || '#000000';
+      const sw = layer.stroke_width || 2;
+      if (layerStrokeWidthSlider) layerStrokeWidthSlider.value = sw;
+      if (strokeWidthVal) strokeWidthVal.innerText = `${sw}px`;
+    }
   } else {
     textSettingsGroup.style.display = 'none';
     imageSettingsGroup.style.display = 'flex';
     layerLogoScaleSlider.value = layer.scale_percent;
     logoScaleVal.innerText = `${layer.scale_percent}%`;
     if (layer.image_filename) {
-      logoPreviewThumb.innerHTML = `<img src="/api/uploads/${encodeURIComponent(layer.image_filename)}" style="width:100%;height:100%;object-fit:cover;">`;
+      const rawLogoUrl = `/api/uploads/${encodeURIComponent(layer.image_filename)}`;
+      const resolvedLogoUrl = window.resolveStudioUrl ? window.resolveStudioUrl(rawLogoUrl) : rawLogoUrl;
+      logoPreviewThumb.innerHTML = `<img src="${resolvedLogoUrl}" style="width:100%;height:100%;object-fit:cover;">`;
     } else {
       logoPreviewThumb.innerHTML = `<span style="font-size:10px;color:var(--text-dim);">None</span>`;
     }
@@ -670,6 +851,7 @@ function setupCanvasDraggable() {
   window.addEventListener('mouseup', () => {
     if (isDragging) {
       isDragging = false;
+      pushWmHistorySnapshot(true);
       requestLivePreview(true);
     }
   });
@@ -693,6 +875,7 @@ function setupCanvasDraggable() {
   window.addEventListener('touchend', () => {
     if (isDragging) {
       isDragging = false;
+      pushWmHistorySnapshot(true);
       requestLivePreview(true);
     }
   });
@@ -877,7 +1060,8 @@ async function executePreview() {
     videoContainer.style.display = 'flex';
     emptyStagePrompt.style.display = 'none';
 
-    const videoSrc = `/api/uploads/${encodeURIComponent(activeMedia.saved_filename)}`;
+    const rawVideoSrc = `/api/uploads/${encodeURIComponent(activeMedia.saved_filename)}`;
+    const videoSrc = window.resolveStudioUrl ? window.resolveStudioUrl(rawVideoSrc) : rawVideoSrc;
     // Compare the stored file id, not the resolved URL: names with '#', '?', '%'
     // or emoji are percent-encoded in previewVideo.src, so a raw includes() check
     // would always miss and reload the video on every render.
@@ -931,7 +1115,10 @@ async function executePreview() {
       const data = await res.json();
       if (reqId !== previewRequestId) return;
       if (data.preview_url) {
-        previewImg.src = data.preview_url;
+        state.lastRenderedPreviewUrl = data.preview_url;
+        if (!state.isPeekingOriginal) {
+          previewImg.src = data.preview_url;
+        }
         previewImg.style.display = 'block';
         emptyStagePrompt.style.display = 'none';
       }
@@ -1034,7 +1221,8 @@ function pollJobStatus() {
         modalProgressText.innerText = failedCount
           ? `${completedCount} of ${job.items.length} files processed; ${failedCount} failed.`
           : `All ${completedCount} files processed successfully!`;
-        btnDownloadZip.href = `/api/download-zip/${state.activeJobId}`;
+        const rawZipUrl = `/api/download-zip/${state.activeJobId}`;
+        btnDownloadZip.href = window.resolveStudioUrl ? window.resolveStudioUrl(rawZipUrl) : rawZipUrl;
         btnDownloadZip.style.display = completedCount ? 'inline-flex' : 'none';
       } else if (job.status === 'failed' || job.status === 'cancelled') {
         modalSpinner.style.display = 'none';
@@ -1049,6 +1237,123 @@ function pollJobStatus() {
     .catch(err => {
       console.error("Job status polling error:", err);
     });
+}
+
+function pushWmHistorySnapshot(clearRedo = true) {
+  const snap = JSON.stringify({
+    layers: state.layers,
+    activeLayerId: state.activeLayerId
+  });
+  if (state.undoStack.length && state.undoStack[state.undoStack.length - 1] === snap) return;
+  state.undoStack.push(snap);
+  if (state.undoStack.length > 40) state.undoStack.shift();
+  if (clearRedo) state.redoStack = [];
+  syncWmHistoryButtons();
+}
+
+function syncWmHistoryButtons() {
+  if (btnWmUndo) btnWmUndo.disabled = state.undoStack.length <= 1;
+  if (btnWmRedo) btnWmRedo.disabled = state.redoStack.length === 0;
+}
+
+function wmUndo() {
+  if (state.undoStack.length <= 1) return;
+  const current = state.undoStack.pop();
+  state.redoStack.push(current);
+  const prev = JSON.parse(state.undoStack[state.undoStack.length - 1]);
+  state.layers = prev.layers;
+  state.activeLayerId = prev.activeLayerId;
+  renderLayersTabs();
+  syncFormToActiveLayer();
+  syncWmHistoryButtons();
+  requestLivePreview(true);
+}
+
+function wmRedo() {
+  if (!state.redoStack.length) return;
+  const nextSnap = state.redoStack.pop();
+  state.undoStack.push(nextSnap);
+  const next = JSON.parse(nextSnap);
+  state.layers = next.layers;
+  state.activeLayerId = next.activeLayerId;
+  renderLayersTabs();
+  syncFormToActiveLayer();
+  syncWmHistoryButtons();
+  requestLivePreview(true);
+}
+
+function setWmZoom(nextZoom) {
+  state.wmZoom = Math.max(0.5, Math.min(3.0, Math.round(nextZoom * 100) / 100));
+  if (wmZoomVal) wmZoomVal.innerText = `${Math.round(state.wmZoom * 100)}%`;
+  if (canvasWrapper) {
+    canvasWrapper.style.transformOrigin = 'center center';
+    canvasWrapper.style.transform = state.wmZoom === 1 ? '' : `scale(${state.wmZoom})`;
+  }
+}
+
+function setPeekOriginal(peeking) {
+  state.isPeekingOriginal = peeking;
+  const activeMedia = state.mediaList.find(m => m.id === state.activeMediaId);
+  if (!activeMedia) return;
+  if (activeMedia.media_type === 'video') {
+    videoWatermarkOverlay.style.display = peeking ? 'none' : 'block';
+  } else if (peeking) {
+    const rawOrig = `/api/uploads/${encodeURIComponent(activeMedia.saved_filename)}`;
+    previewImg.src = window.resolveStudioUrl ? window.resolveStudioUrl(rawOrig) : rawOrig;
+  } else if (state.lastRenderedPreviewUrl) {
+    previewImg.src = state.lastRenderedPreviewUrl;
+  }
+}
+
+function getSavedWmPresets() {
+  try {
+    return JSON.parse(localStorage.getItem(WM_PRESETS_STORAGE_KEY) || '{}');
+  } catch (_) {
+    return {};
+  }
+}
+
+function renderSavedPresetsList() {
+  if (!savedWmPresetsRow || !savedWmPresetsSelect) return;
+  const presets = getSavedWmPresets();
+  const names = Object.keys(presets);
+  if (!names.length) {
+    savedWmPresetsRow.style.display = 'none';
+    return;
+  }
+  savedWmPresetsRow.style.display = 'flex';
+  savedWmPresetsSelect.innerHTML = names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+}
+
+function saveCurrentWmPreset() {
+  const name = prompt('Preset name (saved in browser):', 'My Watermark Style');
+  if (!name || !name.trim()) return;
+  const presets = getSavedWmPresets();
+  presets[name.trim()] = state.layers;
+  localStorage.setItem(WM_PRESETS_STORAGE_KEY, JSON.stringify(presets));
+  renderSavedPresetsList();
+  if (savedWmPresetsSelect) savedWmPresetsSelect.value = name.trim();
+}
+
+function applySelectedSavedPreset() {
+  if (!savedWmPresetsSelect || !savedWmPresetsSelect.value) return;
+  const presets = getSavedWmPresets();
+  const layers = presets[savedWmPresetsSelect.value];
+  if (!Array.isArray(layers) || !layers.length) return;
+  pushWmHistorySnapshot(true);
+  state.layers = JSON.parse(JSON.stringify(layers));
+  state.activeLayerId = state.layers[0].id;
+  renderLayersTabs();
+  syncFormToActiveLayer();
+  requestLivePreview(true);
+}
+
+function deleteSelectedSavedPreset() {
+  if (!savedWmPresetsSelect || !savedWmPresetsSelect.value) return;
+  const presets = getSavedWmPresets();
+  delete presets[savedWmPresetsSelect.value];
+  localStorage.setItem(WM_PRESETS_STORAGE_KEY, JSON.stringify(presets));
+  renderSavedPresetsList();
 }
 
 function escapeHtml(str) {
