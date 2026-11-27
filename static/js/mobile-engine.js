@@ -2866,6 +2866,159 @@
       return jsonResponse({ job_id: jobId, status: "processing" });
     }
 
+    // 5E) File Converter Offline Routes (images + ZIP bundling)
+    if (clean === "/api/converter/capabilities" && method === "GET") {
+      return jsonResponse({
+        notes: {
+          media: "Offline Android mode: image conversion (PNG, JPG, WebP) and ZIP bundling run locally on-device. Video, audio, PDF, and Office conversions require the PC/LAN server.",
+          office: "",
+          archives: "",
+        },
+      });
+    }
+
+    if (clean === "/api/converter/upload" && method === "POST") {
+      const form = options.body;
+      const files = form && typeof form.getAll === "function" ? form.getAll("files") : [];
+      const mediaList = [];
+      const rejected = [];
+      for (const f of files) {
+        if (!f || !f.name) continue;
+        const ext = (f.name.split(".").pop() || "").toLowerCase();
+        const normExt = ext === "jpeg" ? "jpg" : ext;
+        const isImg = (f.type && f.type.startsWith("image/")) || ["png", "jpg", "jpeg", "webp", "bmp", "gif"].includes(ext);
+        const fid = nextId("conv");
+        const objUrl = URL.createObjectURL(f);
+        mediaRegistry.set(fid, {
+          id: fid,
+          filename: f.name,
+          media_type: isImg ? "image" : "file",
+          size_bytes: f.size || 0,
+          file: f,
+          objectUrl: objUrl,
+        });
+        const targets = isImg ? ["png", "jpg", "webp"].filter((t) => t !== normExt) : [];
+        mediaList.push({
+          id: fid,
+          filename: f.name,
+          media_type: isImg ? "image" : "file",
+          format_name: normExt ? normExt.toUpperCase() : "FILE",
+          size_bytes: f.size || 0,
+          targets,
+        });
+      }
+      return jsonResponse({ media: mediaList, rejected });
+    }
+
+    if (clean === "/api/converter/jobs" && method === "POST") {
+      const body = JSON.parse(options.body || "{}");
+      const jobId = nextId("cjob");
+      const job = { id: jobId, status: "processing", progress: 0, items: [], zip_download_url: null };
+      jobRegistry.set(jobId, job);
+
+      setTimeout(async () => {
+        const conversions = body.conversions || [];
+        const zipIds = body.zip_file_ids || [];
+        const zip = global.JSZip ? new global.JSZip() : null;
+        const mimeMap = { png: "image/png", jpg: "image/jpeg", webp: "image/webp" };
+
+        if (zipIds.length > 0 && zip) {
+          for (const fid of zipIds) {
+            const rec = mediaRegistry.get(fid);
+            if (rec && rec.file) zip.file(rec.filename, rec.file);
+          }
+          const zBlob = await zip.generateAsync({ type: "blob" });
+          const zName = `archive_${jobId}.zip`;
+          const dlUrl = registerBlobUrl(`/api/download/${zName}`, zBlob, zName, "application/zip");
+          registerBlobUrl(`/api/converter/preview/${zName}`, zBlob, zName, "application/zip");
+          job.items.push({
+            filename: "ZIP Archive",
+            output_filename: zName,
+            target: "zip",
+            status: "completed",
+            size_bytes: zBlob.size,
+            download_url: dlUrl,
+          });
+          job.progress = 1;
+          job.status = "completed";
+          return;
+        }
+
+        if ((body.combine_image_ids || []).length > 0) {
+          job.error = "Combine images to PDF requires the PC/LAN server.";
+          job.progress = 1;
+          job.status = "failed";
+          return;
+        }
+
+        for (let i = 0; i < conversions.length; i += 1) {
+          const req = conversions[i];
+          const rec = mediaRegistry.get(req.file_id);
+          try {
+            if (!rec || rec.media_type !== "image") {
+              throw new Error("Only image conversion is available offline on Android.");
+            }
+            const base = await renderMediaBaseCanvas(rec, null, 0);
+            const target = (req.target || "png").toLowerCase();
+            const mime = mimeMap[target] || "image/png";
+            if (target === "jpg") {
+              const bgCanvas = document.createElement("canvas");
+              bgCanvas.width = base.width;
+              bgCanvas.height = base.height;
+              const bctx = bgCanvas.getContext("2d");
+              bctx.fillStyle = "#ffffff";
+              bctx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
+              bctx.drawImage(base.canvas, 0, 0);
+              base.canvas = bgCanvas;
+            }
+            const outBlob = await canvasToBlob(base.canvas, mime, 0.92);
+            const stem = rec.filename.replace(/\.[^.]+$/, "") || rec.id;
+            const outName = `${stem}.${target}`;
+            const storedName = `${jobId}_${outName}`;
+            const dlUrl = registerBlobUrl(`/api/download/${storedName}`, outBlob, outName, mime);
+            registerBlobUrl(`/api/converter/preview/${storedName}`, outBlob, outName, mime);
+            if (zip) zip.file(outName, outBlob);
+            job.items.push({
+              file_id: rec.id,
+              filename: rec.filename,
+              output_filename: storedName,
+              target,
+              status: "completed",
+              size_bytes: outBlob.size,
+              download_url: dlUrl,
+            });
+          } catch (err) {
+            job.items.push({
+              file_id: req.file_id,
+              filename: rec ? rec.filename : req.file_id,
+              target: req.target,
+              status: "failed",
+              error: err.message,
+            });
+          }
+          job.progress = (i + 1) / Math.max(1, conversions.length);
+        }
+
+        const completed = job.items.filter((x) => x.status === "completed");
+        if (zip && completed.length > 1) {
+          const zBlob = await zip.generateAsync({ type: "blob" });
+          const zName = `converted_${jobId}.zip`;
+          job.zip_download_url = registerBlobUrl(`/api/download/${zName}`, zBlob, zName, "application/zip");
+        }
+        job.progress = 1;
+        job.status = completed.length ? "completed" : "failed";
+      }, 20);
+
+      return jsonResponse({ job_id: jobId, status: "processing" });
+    }
+
+    const convJobMatch = clean.match(/^\/api\/converter\/jobs\/([^/]+)$/);
+    if (convJobMatch && method === "GET") {
+      const job = jobRegistry.get(convJobMatch[1]);
+      if (!job) return jsonResponse({ detail: "Job not found" }, 404);
+      return jsonResponse(job);
+    }
+
     // 6) Job Status & Cancel & Mapped Static Blobs
     const jobCancelMatch = clean.match(/^\/api\/job\/([^/]+)\/cancel$/);
     if (jobCancelMatch && method === "POST") {

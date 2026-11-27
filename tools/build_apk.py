@@ -104,32 +104,36 @@ def generate_launcher_icons() -> None:
         "mipmap-xxhdpi": 144,
         "mipmap-xxxhdpi": 192,
     }
+    scale = 4
     for folder, size in densities.items():
         out_dir = RES_DIR / folder
         out_dir.mkdir(parents=True, exist_ok=True)
-        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        hi_size = size * scale
+        img = Image.new("RGBA", (hi_size, hi_size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        pad = max(2, round(size * 0.06))
-        radius = max(8, round(size * 0.24))
+        # Match PC logo from server.py _FAVICON_SVG (32x32 viewBox, rx=7, #15263d badge, #60a5fa F)
+        u = hi_size / 32.0
+        radius = round(7.0 * u)
         draw.rounded_rectangle(
-            [pad, pad, size - pad - 1, size - pad - 1],
+            [0, 0, hi_size - 1, hi_size - 1],
             radius=radius,
-            fill=(15, 23, 42, 255),
-            outline=(99, 102, 241, 255),
-            width=max(2, round(size * 0.05)),
+            fill=(21, 38, 61, 255),
         )
-        # Inner aperture ring / badge accent
-        c_pad = round(size * 0.25)
-        draw.rounded_rectangle(
-            [c_pad, c_pad, size - c_pad - 1, size - c_pad - 1],
-            radius=max(4, round(size * 0.10)),
-            fill=(34, 211, 238, 255),
-        )
-        i_pad = round(size * 0.36)
-        draw.ellipse(
-            [i_pad, i_pad, size - i_pad - 1, size - i_pad - 1],
-            fill=(15, 23, 42, 255),
-        )
+        # M9 8 h14 v3.5 H13 v4.2 h8.5 v3.4 H13 V24 H9 V8 z
+        f_poly = [
+            (round(9 * u), round(8 * u)),
+            (round(23 * u), round(8 * u)),
+            (round(23 * u), round(11.5 * u)),
+            (round(13 * u), round(11.5 * u)),
+            (round(13 * u), round(15.7 * u)),
+            (round(21.5 * u), round(15.7 * u)),
+            (round(21.5 * u), round(19.1 * u)),
+            (round(13 * u), round(19.1 * u)),
+            (round(13 * u), round(24 * u)),
+            (round(9 * u), round(24 * u)),
+        ]
+        draw.polygon(f_poly, fill=(96, 165, 250, 255))
+        img = img.resize((size, size), Image.Resampling.LANCZOS)
         img.save(out_dir / "ic_launcher.png", "PNG")
 
 
