@@ -897,7 +897,11 @@ async function handleFilesUpload(files) {
       method: 'POST',
       body: formData
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.detail || `Failed to upload media (HTTP ${res.status}).`);
+      return;
+    }
     if (data.media) {
       data.media.forEach(m => {
         state.mediaList.push(m);
@@ -933,7 +937,11 @@ async function handleLogoUpload(e) {
       method: 'POST',
       body: formData
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.detail || `Failed to upload logo (HTTP ${res.status}).`);
+      return;
+    }
     if (data.filename) {
       const layer = getActiveLayer();
       layer.image_filename = data.filename;
@@ -1023,6 +1031,7 @@ function updateSelectedCount() {
 
 // Live Preview
 let previewRequestId = 0;
+let previewAbortController = null;
 function requestLivePreview(immediate = false) {
   if (state.previewDebounceTimer) {
     clearTimeout(state.previewDebounceTimer);
@@ -1077,9 +1086,12 @@ async function executePreview() {
     }
 
     try {
+      if (previewAbortController) previewAbortController.abort();
+      previewAbortController = new AbortController();
       const res = await fetch('/api/watermark-overlay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: previewAbortController.signal,
         body: JSON.stringify({
           file_ids: [state.activeMediaId],
           session_id: window.STUDIO_TAB_SESSION_ID || null,
@@ -1093,6 +1105,7 @@ async function executePreview() {
         videoWatermarkOverlay.style.display = 'block';
       }
     } catch (err) {
+      if (err && err.name === 'AbortError') return;
       console.error("Video overlay render failed:", err);
     }
   } else {
@@ -1103,9 +1116,12 @@ async function executePreview() {
     videoContainer.style.display = 'none';
 
     try {
+      if (previewAbortController) previewAbortController.abort();
+      previewAbortController = new AbortController();
       const res = await fetch('/api/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: previewAbortController.signal,
         body: JSON.stringify({
           file_ids: [state.activeMediaId],
           session_id: window.STUDIO_TAB_SESSION_ID || null,
@@ -1123,6 +1139,7 @@ async function executePreview() {
         emptyStagePrompt.style.display = 'none';
       }
     } catch (err) {
+      if (err && err.name === 'AbortError') return;
       console.error("Preview render failed:", err);
     }
   }

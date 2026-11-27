@@ -109,7 +109,9 @@
 
   function drawBackground(w,h) {
     if (state.backgroundMode === 'image' && state.backgroundImage) {
-      coverImage(state.backgroundImage, 0, 0, w, h);
+      ctx.fillStyle = state.background; ctx.fillRect(0,0,w,h);
+      const bgImg = state.backgroundImage.image || state.backgroundImage;
+      if (bgImg && bgImg.width > 0) coverImage(bgImg, 0, 0, w, h);
     } else if (state.backgroundMode === 'gradient') {
       const grad = state.direction === 'vertical' ? ctx.createLinearGradient(0,0,0,h)
         : state.direction === 'diagonal' ? ctx.createLinearGradient(0,0,w,h) : ctx.createLinearGradient(0,0,w,0);
@@ -128,10 +130,13 @@
       if (sw <= 0 || sh <= 0) return;
       const r = shortSide * state.radius / 1000;
       pathRoundRect(x,y,sw,sh,r); ctx.save(); ctx.clip();
-      ctx.fillStyle = state.background;
-      ctx.fillRect(x,y,sw,sh);
       const photo = state.photos[i];
-      if (photo) drawPhoto(photo,x,y,sw,sh);
+      if (photo) {
+        if (state.template === 'custom' && i > 0) {
+          drawBackground(w, h);
+        }
+        drawPhoto(photo,x,y,sw,sh);
+      }
       ctx.restore();
       if (state.borderWidth > 0) {
         pathRoundRect(x,y,sw,sh,r); ctx.lineWidth = state.borderWidth * (w / 1200);
@@ -144,18 +149,33 @@
     });
   }
 
+  function createPhotoPreview(image, maxDim = 1024) {
+    const w = image.naturalWidth || image.width;
+    const h = image.naturalHeight || image.height;
+    if (!w || !h || Math.max(w, h) <= maxDim) return image;
+    const scale = maxDim / Math.max(w, h);
+    const pw = Math.max(1, Math.round(w * scale));
+    const ph = Math.max(1, Math.round(h * scale));
+    const off = document.createElement('canvas');
+    off.width = pw;
+    off.height = ph;
+    off.getContext('2d').drawImage(image, 0, 0, pw, ph);
+    return off;
+  }
+
   function drawPhoto(photo,x,y,w,h) {
     const filters={original:'none',mono:'grayscale(1)',warm:'sepia(.25) saturate(1.25)',cool:'hue-rotate(12deg) saturate(1.1)',vintage:'sepia(.5) contrast(1.08)',bright:'brightness(1.12) contrast(1.05)'};
+    const srcImg = state.isExporting ? photo.image : (photo.preview || photo.image);
     ctx.save();
     ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
     ctx.translate(x+w/2+(photo.offsetX||0)*w,y+h/2+(photo.offsetY||0)*h);
     ctx.rotate((photo.rotation||0)*Math.PI/180);
     ctx.scale((photo.flipX?-1:1)*(photo.zoom||100)/100,(photo.flipY?-1:1)*(photo.zoom||100)/100);
     ctx.filter=filters[photo.filter||'original']||'none';
-    if(state.fitMode==='cover') coverImage(photo.image,-w/2,-h/2,w,h);
+    if(state.fitMode==='cover') coverImage(srcImg,-w/2,-h/2,w,h);
     else {
-      const scale=Math.min(w/photo.image.width,h/photo.image.height),dw=photo.image.width*scale,dh=photo.image.height*scale;
-      ctx.drawImage(photo.image,-dw/2,-dh/2,dw,dh);
+      const scale=Math.min(w/srcImg.width,h/srcImg.height),dw=srcImg.width*scale,dh=srcImg.height*scale;
+      ctx.drawImage(srcImg,-dw/2,-dh/2,dw,dh);
     }
     ctx.restore();
   }
@@ -249,6 +269,26 @@
     state.lastSnapshot = raw;
     if ($('collageRatio')) $('collageRatio').value = state.ratio;
     if ($('collageFitMode')) $('collageFitMode').value = state.fitMode;
+    if ($('collageBackgroundMode')) {
+      $('collageBackgroundMode').value = state.backgroundMode;
+      if ($('collageGradientControls')) $('collageGradientControls').hidden = state.backgroundMode !== 'gradient';
+      if ($('btnChooseBackground')) $('btnChooseBackground').hidden = state.backgroundMode !== 'image';
+    }
+    if ($('collageBackgroundColor')) $('collageBackgroundColor').value = state.background;
+    if ($('collageGradientColor')) $('collageGradientColor').value = state.gradient;
+    if ($('collageGradientDirection')) $('collageGradientDirection').value = state.direction;
+    if ($('collageBorderColor')) $('collageBorderColor').value = state.borderColor;
+    if ($('collageFillColor')) $('collageFillColor').value = state.fillColor;
+    if ($('collageLineColor')) $('collageLineColor').value = state.lineColor;
+    if ($('collageTextColor')) $('collageTextColor').value = state.textColor;
+    if ($('collageFillEnabled')) $('collageFillEnabled').checked = Boolean(state.fillEnabled);
+    if ($('collageTextInput')) $('collageTextInput').value = state.text;
+    if ($('collageFont')) $('collageFont').value = state.font;
+    if ($('collageBold')) $('collageBold').checked = Boolean(state.bold);
+    [['collageRadius','radius','collageRadiusValue'],['collageMargin','margin','collageMarginValue'],['collagePadding','padding','collagePaddingValue'],['collageBorderWidth','borderWidth','collageBorderWidthValue'],['collageLineWidth','lineWidth','collageLineWidthValue']].forEach(([id,key,label])=>{
+      if ($(id)) $(id).value = state[key];
+      if ($(label)) $(label).textContent = state[key];
+    });
     document.querySelectorAll('.template-choice').forEach(b => b.classList.toggle('active', b.dataset.template === state.template));
     updateCollageHistoryButtons();
     renderAtWidth(1200);
@@ -276,6 +316,10 @@
     const outH = Math.round(outW / ratios[state.ratio]);
     $('collageCanvasSize').textContent = `${state.ratio} · Preview ${width}×${height} → Export ${outW}×${outH}`;
     ctx.clearRect(0, 0, width, height);
+    if (state.isExporting && state.exportFormat === 'jpeg') {
+      ctx.fillStyle = state.background;
+      ctx.fillRect(0, 0, width, height);
+    }
     const outerRadius = Math.min(width, height) * state.radius / 1000;
     pathRoundRect(0, 0, width, height, outerRadius); ctx.save(); ctx.clip();
     drawBackground(width, height); drawSlots(width, height);
@@ -285,10 +329,15 @@
     $('btnDeleteAnnotation').disabled = state.selectedAnnotation < 0;
   }
 
+  let rafRedrawId = 0;
   function redraw() {
-    renderAtWidth(1200);
-    clearTimeout(state.historyTimer);
-    state.historyTimer = setTimeout(recordCollageSnapshot, 220);
+    if (rafRedrawId) return;
+    rafRedrawId = requestAnimationFrame(() => {
+      rafRedrawId = 0;
+      renderAtWidth(1200);
+      clearTimeout(state.historyTimer);
+      state.historyTimer = setTimeout(recordCollageSnapshot, 220);
+    });
   }
 
   function renderPhotos() {
@@ -486,15 +535,32 @@
   document.querySelectorAll('.collage-photo-edit-group [data-photo-action]').forEach(button=>button.addEventListener('click',()=>applyPhotoAction(button.dataset.photoAction)));
 
   $('collageUploadButton').addEventListener('click',()=>$('collageImageInput').click());
-  const makePhoto=(name,url,image)=>({name,url,image,rotation:0,flipX:false,flipY:false,zoom:100,offsetX:0,offsetY:0,filter:'original'});
+  const makePhoto=(name,url,image)=>({name,url,image,preview:createPhotoPreview(image),rotation:0,flipX:false,flipY:false,zoom:100,offsetX:0,offsetY:0,filter:'original'});
   function addPhotos(files) {
-    [...files].filter(file=>file.type.startsWith('image/')).forEach(file=>{
-      const url=URL.createObjectURL(file),image=new Image();
-      image.onload=()=>{state.photos.push(makePhoto(file.name,url,image));if(state.photos.length===1)state.selectedPhoto=0;if(state.template==='custom')syncCustomSlots();renderPhotos();redraw();};
-      image.onerror=()=>URL.revokeObjectURL(url);
-      image.src=url;
+    const imageFiles = [...files].filter(file => file.type.startsWith('image/'));
+    if (!imageFiles.length) return;
+    const loadOne = file => new Promise(resolve => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => resolve(makePhoto(file.name, url, image));
+      image.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      image.src = url;
+    });
+    Promise.all(imageFiles.map(loadOne)).then(loaded => {
+      const valid = loaded.filter(Boolean);
+      if (!valid.length) return;
+      const hadNone = state.photos.length === 0;
+      state.photos.push(...valid);
+      if (hadNone) state.selectedPhoto = 0;
+      if (state.template === 'custom') syncCustomSlots();
+      renderPhotos();
+      redraw();
     });
   }
+  window.addEventListener('pagehide', () => {
+    state.photos.forEach(p => { if (p && p.url) URL.revokeObjectURL(p.url); });
+    if (state.backgroundImage?.url) URL.revokeObjectURL(state.backgroundImage.url);
+  });
   $('collageImageInput').addEventListener('change',event=>{addPhotos(event.target.files);event.target.value='';});
   $('collageReplaceInput').addEventListener('change',event=>{
     const file=event.target.files[0],index=state.replacePhotoIndex;event.target.value='';state.replacePhotoIndex=-1;if(!file||index<0||!file.type.startsWith('image/'))return;
@@ -515,7 +581,7 @@
   $('collageGradientColor').addEventListener('input',event=>{state.gradient=event.target.value;redraw();});
   $('collageGradientDirection').addEventListener('change',event=>{state.direction=event.target.value;redraw();});
   $('btnChooseBackground').addEventListener('click',()=>$('collageBackgroundInput').click());
-  $('collageBackgroundInput').addEventListener('change',event=>{const file=event.target.files[0];if(!file)return;const image=new Image();image.onload=()=>{if(state.backgroundImage?.url)URL.revokeObjectURL(state.backgroundImage.url);state.backgroundImage={image,url:image.src};redraw();};image.src=URL.createObjectURL(file);event.target.value='';});
+  $('collageBackgroundInput').addEventListener('change',event=>{const file=event.target.files[0];if(!file)return;const url=URL.createObjectURL(file),image=new Image();image.onload=()=>{if(state.backgroundImage?.url)URL.revokeObjectURL(state.backgroundImage.url);state.backgroundImage={image,url};redraw();};image.onerror=()=>URL.revokeObjectURL(url);image.src=url;event.target.value='';});
   [['collageRadius','radius','collageRadiusValue'],['collageMargin','margin','collageMarginValue'],['collagePadding','padding','collagePaddingValue'],['collageLineWidth','lineWidth','collageLineWidthValue']].forEach(([id,key,label])=>$(id).addEventListener('input',event=>{state[key]=Number(event.target.value);$(label).textContent=event.target.value;redraw();}));
   $('collageBorderWidth').addEventListener('input',event=>{state.borderWidth=Number(event.target.value);$('collageBorderWidthValue').textContent=event.target.value;redraw();});
   [['collageBorderColor','borderColor'],['collageFillColor','fillColor'],['collageLineColor','lineColor'],['collageTextColor','textColor']].forEach(([id,key])=>$(id).addEventListener('input',event=>{state[key]=event.target.value;redraw();}));

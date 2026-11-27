@@ -3680,3 +3680,120 @@ input[type="range"] { accent-color: var(--primary); }
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Modern OKLCH Theme System (Obsidian OLED & Nordic Slate) + Micro-Interactions
+   ========================================================================== */
+[data-theme="oled"] {
+  color-scheme: dark;
+  --bg-base: oklch(0.06 0.005 260);
+  --bg-surface: oklch(0.10 0.008 260 / 0.92);
+  --bg-surface-hover: oklch(0.15 0.012 260);
+  --bg-card: oklch(0.11 0.008 260 / 0.88);
+  --bg-input: oklch(0.08 0.006 260);
+  --border-subtle: oklch(0.24 0.012 260 / 0.65);
+  --border-focus: oklch(0.72 0.21 250);
+  --text-main: oklch(0.98 0.004 260);
+  --text-muted: oklch(0.72 0.012 260);
+  --text-dim: oklch(0.52 0.012 260);
+  --primary: oklch(0.66 0.23 255);
+  --primary-hover: oklch(0.72 0.23 255);
+  --accent-cyan: oklch(0.78 0.17 200);
+  --accent-emerald: oklch(0.76 0.19 155);
+  --accent-rose: oklch(0.68 0.23 20);
+}
+
+[data-theme="nord"] {
+  color-scheme: dark;
+  --bg-base: oklch(0.19 0.024 242);
+  --bg-surface: oklch(0.23 0.028 242 / 0.90);
+  --bg-surface-hover: oklch(0.28 0.032 242);
+  --bg-card: oklch(0.25 0.028 242 / 0.82);
+  --bg-input: oklch(0.18 0.022 242);
+  --border-subtle: oklch(0.35 0.032 242 / 0.58);
+  --border-focus: oklch(0.74 0.14 210);
+  --text-main: oklch(0.95 0.012 235);
+  --text-muted: oklch(0.75 0.024 235);
+  --text-dim: oklch(0.58 0.024 235);
+  --primary: oklch(0.70 0.15 215);
+  --primary-hover: oklch(0.75 0.15 215);
+  --accent-cyan: oklch(0.78 0.13 195);
+  --accent-emerald: oklch(0.74 0.14 155);
+  --accent-rose: oklch(0.68 0.17 18);
+}
+
+body {
+  transition: background-color 0.22s ease, color 0.22s ease;
+}
+
+body.landing-body {
+  background-color: var(--bg-base) !important;
+  background-image:
+    radial-gradient(ellipse 68% 45% at 50% -10%, color-mix(in oklch, var(--primary) 18%, transparent), transparent 72%),
+    radial-gradient(ellipse 40% 35% at 92% 95%, color-mix(in oklch, var(--accent-cyan) 11%, transparent), transparent 70%) !important;
+}
+
+[data-theme="light"] body.landing-body {
+  background-color: var(--bg-base) !important;
+  background-image:
+    radial-gradient(ellipse 70% 45% at 50% -10%, rgba(37, 99, 235, 0.09), transparent 70%),
+    radial-gradient(ellipse 40% 35% at 92% 95%, rgba(2, 132, 199, 0.06), transparent 70%) !important;
+}
+
+.tool-card {
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.tool-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in oklch, var(--primary) 55%, var(--border-subtle)) !important;
+  box-shadow: 0 14px 32px -10px rgba(0, 0, 0, 0.38), 0 0 0 1px color-mix(in oklch, var(--primary) 28%, transparent) !important;
+}
+
+.tool-card:active {
+  transform: translateY(-1px) scale(0.992);
+}
+
+.tool-icon svg {
+  display: block;
+}
+
+.studio-pill {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  vertical-align: middle;
+  color: var(--primary-hover);
+  background: color-mix(in oklch, var(--primary) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--primary) 26%, transparent);
+}
+
+.kbd-hint {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border-radius: 5px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+}
+
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.theme-toggle-btn {
+  transition: transform 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.theme-toggle-btn:hover {
+  transform: rotate(18deg) scale(1.06);
+}
