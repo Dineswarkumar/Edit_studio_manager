@@ -1,3 +1,4 @@
+import functools
 import os
 from PIL import ImageFont
 
@@ -25,29 +26,38 @@ FONT_MAP = {
     "trebuchet ms bold": "trebucbd.ttf"
 }
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BUNDLED_FONTS_DIR = os.path.join(BASE_DIR, "static", "assets", "fonts")
 WINDOWS_FONTS_DIR = os.environ.get("WINDIR", "C:\\Windows") + "\\Fonts"
 
+@functools.lru_cache(maxsize=128)
 def get_font(family: str = "Arial", size: int = 36, bold: bool = False) -> ImageFont.FreeTypeFont:
     name = family.strip().lower()
     if bold:
         name = f"{name} bold"
-        
+
     font_file = FONT_MAP.get(name) or FONT_MAP.get(family.strip().lower())
-    
+
+    candidate_dirs = [BUNDLED_FONTS_DIR, WINDOWS_FONTS_DIR, "/system/fonts"]
     if font_file:
-        full_path = os.path.join(WINDOWS_FONTS_DIR, font_file)
-        if os.path.exists(full_path):
+        for directory in candidate_dirs:
+            full_path = os.path.join(directory, font_file)
+            if os.path.exists(full_path):
+                try:
+                    return ImageFont.truetype(full_path, size=size)
+                except Exception:
+                    pass
+
+    # Fallback to bundled arial / system Roboto / Windows arial
+    for fallback_path in (
+        os.path.join(BUNDLED_FONTS_DIR, "arial.ttf"),
+        os.path.join(WINDOWS_FONTS_DIR, "arial.ttf"),
+        "/system/fonts/Roboto-Regular.ttf",
+    ):
+        if os.path.exists(fallback_path):
             try:
-                return ImageFont.truetype(full_path, size=size)
+                return ImageFont.truetype(fallback_path, size=size)
             except Exception:
                 pass
-                
-    # Direct try with family as file or fallback to arial
-    fallback_arial = os.path.join(WINDOWS_FONTS_DIR, "arial.ttf")
-    if os.path.exists(fallback_arial):
-        try:
-            return ImageFont.truetype(fallback_arial, size=size)
-        except Exception:
-            pass
 
     return ImageFont.load_default()

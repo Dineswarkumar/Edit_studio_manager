@@ -3,10 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#202327">
+  <meta name="theme-color" content="#191d24">
   <title>Frame Studio</title>
-  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-19">
-  <script src="/js/theme.js?v=studio-redesign-19"></script>
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-25">
+  <script src="/js/theme.js?v=studio-redesign-25"></script>
+  <script src="/js/vendor/jszip.min.js"></script>
+  <script src="/js/mobile-engine.js"></script>
 </head>
 <body class="landing-body">
   <header class="landing-header">
@@ -16,45 +18,100 @@
     </a>
     <div class="landing-header-actions">
       <span class="local-status"><span class="status-dot"></span> On this device</span>
-      <button class="theme-toggle-btn" type="button" aria-label="Toggle theme" title="Toggle light or dark mode">◐</button>
+      <button class="theme-toggle-btn" type="button" aria-label="Switch theme" title="Switch theme (Alt+T)">◐</button>
     </div>
   </header>
 
   <main class="landing-main">
     <div class="landing-heading">
-      <p class="eyebrow">MEDIA WORKSPACE</p>
+      <p class="eyebrow">LOCAL MEDIA WORKSPACE · 8 STUDIOS</p>
       <h1>What are you making?</h1>
     </div>
 
     <section class="tools-grid" aria-label="Media tools">
       <a href="/watermark.html" class="tool-card tool-watermark">
-        <span class="tool-icon" aria-hidden="true">W</span>
-        <span class="tool-card-copy"><strong>Watermark</strong><small>Add text or a logo to images and video.</small></span>
+        <span class="tool-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </span>
+        <span class="tool-card-copy">
+          <strong>Watermark <span class="studio-pill">Batch</span></strong>
+          <small>Add text, badges, or logos to images and video.</small>
+        </span>
         <span class="tool-arrow" aria-hidden="true">↗</span>
       </a>
       <a href="/compressor.html" class="tool-card tool-compressor">
-        <span class="tool-icon" aria-hidden="true">C</span>
-        <span class="tool-card-copy"><strong>Compress</strong><small>Reduce file size and choose output quality.</small></span>
+        <span class="tool-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg>
+        </span>
+        <span class="tool-card-copy">
+          <strong>Compress <span class="studio-pill">Target MB</span></strong>
+          <small>Shrink video, photos, PDFs, and office docs.</small>
+        </span>
+        <span class="tool-arrow" aria-hidden="true">↗</span>
+      </a>
+      <a href="/converter.html" class="tool-card tool-converter">
+        <span class="tool-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        </span>
+        <span class="tool-card-copy">
+          <strong>File Converter <span class="studio-pill">Universal</span></strong>
+          <small>Convert images, video, audio, documents, and archives.</small>
+        </span>
         <span class="tool-arrow" aria-hidden="true">↗</span>
       </a>
       <a href="/thumbnail.html" class="tool-card tool-thumbnail">
-        <span class="tool-icon" aria-hidden="true">T</span>
-        <span class="tool-card-copy"><strong>Thumbnail</strong><small>Build a cover image from video or photos.</small></span>
+        <span class="tool-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        </span>
+        <span class="tool-card-copy">
+          <strong>Thumbnail <span class="studio-pill">4K</span></strong>
+          <small>Hunt frames, build storyboards, and style bold titles.</small>
+        </span>
         <span class="tool-arrow" aria-hidden="true">↗</span>
       </a>
       <a href="/collage.html" class="tool-card tool-collage">
-        <span class="tool-icon" aria-hidden="true">C</span>
-        <span class="tool-card-copy"><strong>Collage</strong><small>Arrange photos, add annotations, and export a custom layout.</small></span>
+        <span class="tool-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="11" rx="1.5"/><rect x="13" y="3" width="8" height="6" rx="1.5"/><rect x="13" y="11" width="8" height="10" rx="1.5"/><rect x="3" y="16" width="8" height="5" rx="1.5"/></svg>
+        </span>
+        <span class="tool-card-copy">
+          <strong>Collage <span class="studio-pill">Instant</span></strong>
+          <small>Arrange photos, add annotations, and export custom layouts.</small>
+        </span>
         <span class="tool-arrow" aria-hidden="true">↗</span>
       </a>
       <a href="/censor.html" class="tool-card tool-censor">
-        <span class="tool-icon" aria-hidden="true">P</span>
-        <span class="tool-card-copy"><strong>Privacy</strong><small>Blur faces or cover selected details.</small></span>
+        <span class="tool-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9.5 11.5L12 14l4.5-4.5"/></svg>
+        </span>
+        <span class="tool-card-copy">
+          <strong>Privacy <span class="studio-pill">AI</span></strong>
+          <small>Detect &amp; track faces, NSFW regions, or custom objects.</small>
+        </span>
+        <span class="tool-arrow" aria-hidden="true">↗</span>
+      </a>
+      <a href="/color.html" class="tool-card tool-color">
+        <span class="tool-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 22a10 10 0 1 1 10-10c0 2.5-1.5 3.5-3 3.5h-2a2 2 0 0 0-2 2c0 1.2.5 2 .5 2.5 0 1-1 2-3.5 2z"/></svg>
+        </span>
+        <span class="tool-card-copy">
+          <strong>Color &amp; LUT <span class="studio-pill">3D .cube</span></strong>
+          <small>Apply cinematic 3D LUTs, exposure, shadows, and film grain.</small>
+        </span>
+        <span class="tool-arrow" aria-hidden="true">↗</span>
+      </a>
+      <a href="/audio.html" class="tool-card tool-audio">
+        <span class="tool-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
+        </span>
+        <span class="tool-card-copy">
+          <strong>Audio Booster <span class="studio-pill">R128</span></strong>
+          <small>Boost volume, cut background hum, and normalize loudness.</small>
+        </span>
         <span class="tool-arrow" aria-hidden="true">↗</span>
       </a>
     </section>
 
-    <p class="landing-note">Your media stays on this computer.</p>
+    <p class="landing-note">Your media stays on this computer · Press <kbd class="kbd-hint">Alt+T</kbd> to cycle themes (<span id="activeThemeName">Midnight</span>).</p>
   </main>
 
 </body>

@@ -4,8 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Collage | Frame Studio</title>
-  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-21">
-  <script src="/js/theme.js?v=studio-redesign-20"></script>
+  <link rel="stylesheet" href="/css/style.css?v=studio-redesign-25">
+  <script src="/js/theme.js?v=studio-redesign-25"></script>
+  <script src="/js/vendor/jszip.min.js"></script>
+  <script src="/js/mobile-engine.js"></script>
   <script src="/js/workspace.js?v=studio-redesign-20"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>C</text></svg>">
 </head>
@@ -17,13 +19,27 @@
       <h1 class="app-title">Collage</h1>
     </div>
     <div class="header-actions">
+      <div style="display:flex; gap:4px;" aria-label="Edit history">
+        <button class="btn-secondary" id="btnCollageUndo" type="button" title="Undo (Ctrl+Z)" disabled style="min-width:34px; padding:6px 8px;">↶</button>
+        <button class="btn-secondary" id="btnCollageRedo" type="button" title="Redo (Ctrl+Y)" disabled style="min-width:34px; padding:6px 8px;">↷</button>
+      </div>
       <div class="workspace-layouts" role="group" aria-label="Workspace arrangement">
         <button class="layout-choice active" data-layout="standard" title="Media left, preview center, settings right">Media left</button>
         <button class="layout-choice" data-layout="reversed" title="Settings left, preview center, media right">Media right</button>
         <button class="layout-choice" data-layout="focus" title="Wider preview with narrower side panels">Wide preview</button>
       </div>
       <button class="theme-toggle-btn" type="button" aria-label="Toggle theme" title="Switch light or dark mode">◐</button>
-      <button class="btn-primary" id="btnExportCollage" type="button" disabled>Download PNG</button>
+      <select id="collageExportScale" aria-label="Export resolution" style="padding:7px 8px; border-radius:var(--radius-sm); background:var(--bg-card); color:var(--text-primary); border:1px solid var(--border-subtle); font-size:12px;">
+        <option value="1200">1x (1200px)</option>
+        <option value="2400" selected>2x HD (2400px)</option>
+        <option value="3840">4K UHD (3840px)</option>
+      </select>
+      <select id="collageExportFormat" aria-label="Export format" style="padding:7px 8px; border-radius:var(--radius-sm); background:var(--bg-card); color:var(--text-primary); border:1px solid var(--border-subtle); font-size:12px;">
+        <option value="png">PNG</option>
+        <option value="jpeg">JPEG</option>
+        <option value="webp">WebP</option>
+      </select>
+      <button class="btn-primary" id="btnExportCollage" type="button" disabled>Download Collage</button>
     </div>
   </header>
 
@@ -65,6 +81,7 @@
           <button class="tool-mode" data-tool="ellipse" type="button">Ellipse</button>
           <button class="tool-mode" data-tool="arrow" type="button">Arrow</button>
           <button class="tool-mode" data-tool="text" type="button">Text</button>
+          <button class="tool-mode" data-tool="emoji" type="button">Emoji</button>
         </div>
         <button class="btn-secondary" id="btnDeleteAnnotation" type="button" disabled>Delete selected</button>
       </div>
@@ -173,6 +190,14 @@
           </div>
           <label class="collage-check"><input id="collageBold" type="checkbox" checked> Bold text</label>
         </section>
+
+        <section class="control-group" id="collageEmojiSection">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <label class="control-label" style="margin: 0;">Emoji Stickers</label>
+            <button class="btn-secondary" id="btnAddEmojiCenter" type="button" style="padding: 4px 8px; font-size: 11px;">+ Add to Canvas</button>
+          </div>
+          <div class="emoji-picker-grid" id="collageEmojiGrid"></div>
+        </section>
       </div>
     </section>
   </main>
@@ -190,6 +215,6 @@
       </select>
     </label>
   </div>
-  <script src="/js/collage.js?v=studio-redesign-20"></script>
+  <script src="/js/collage.js?v=studio-redesign-25"></script>
 </body>
 </html>

@@ -66,9 +66,14 @@ def render_text_patch(layer: WatermarkLayer, ref_scale: float) -> Image.Image:
             fill=shadow_rgba
         )
         
-    # Text fill
+    # Text fill + optional outline stroke
     fill_rgba = hex_to_rgba(layer.color, layer.opacity)
-    draw.text((text_x, text_y), text, font=font, fill=fill_rgba)
+    stroke_w = max(1, int(getattr(layer, "stroke_width", 2) * ref_scale)) if getattr(layer, "stroke_enabled", False) else 0
+    stroke_rgba = hex_to_rgba(getattr(layer, "stroke_color", "#000000"), layer.opacity) if stroke_w > 0 else None
+    if stroke_w > 0:
+        draw.text((text_x, text_y), text, font=font, fill=fill_rgba, stroke_width=stroke_w, stroke_fill=stroke_rgba)
+    else:
+        draw.text((text_x, text_y), text, font=font, fill=fill_rgba)
     
     # Rotate patch if angle != 0
     if abs(layer.rotation) > 0.01:
@@ -86,7 +91,8 @@ def render_image_patch(layer: WatermarkLayer, ref_dim: float, uploads_dir: str) 
         return None
         
     try:
-        logo = Image.open(img_path).convert("RGBA")
+        with Image.open(img_path) as raw_logo:
+            logo = raw_logo.convert("RGBA")
     except Exception:
         return None
         
@@ -207,6 +213,56 @@ def create_watermark_overlay(
             
     return overlay
 
+def _save_to_target_size(
+    img: Image.Image,
+    output_path: str,
+    fmt: str,
+    target_size_mb: float,
+    default_quality: int,
+    subsampling: Optional[int] = None,
+) -> None:
+    """Binary-search JPEG/WebP quality (and gently downscale if still over target) to fit <= target_size_mb."""
+    import io
+
+    target_bytes = max(8 * 1024, int(float(target_size_mb) * 1024 * 1024))
+    save_kwargs = {"optimize": True}
+    if fmt == "WEBP":
+        save_kwargs["method"] = 6
+    elif subsampling is not None:
+        save_kwargs["subsampling"] = subsampling
+
+    def encode_bytes(candidate: Image.Image, q: int) -> bytes:
+        buf = io.BytesIO()
+        candidate.save(buf, fmt, quality=q, **save_kwargs)
+        return buf.getvalue()
+
+    working = img
+    for _scale_step in range(4):
+        lo, hi = 10, min(95, max(20, int(default_quality)))
+        best_blob = None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            blob = encode_bytes(working, mid)
+            if len(blob) <= target_bytes:
+                best_blob = blob
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        if best_blob is not None:
+            with open(output_path, "wb") as f:
+                f.write(best_blob)
+            return
+        # If even q=10 exceeded target, downscale by 0.8x once per step
+        nw, nh = max(64, int(working.width * 0.8)), max(64, int(working.height * 0.8))
+        if (nw, nh) == working.size:
+            break
+        working = working.resize((nw, nh), Image.Resampling.LANCZOS)
+
+    final_blob = encode_bytes(working, 10)
+    with open(output_path, "wb") as f:
+        f.write(final_blob)
+
+
 def apply_watermark_to_image(
     input_path: str,
     output_path: str,
@@ -215,27 +271,31 @@ def apply_watermark_to_image(
     output_quality: Optional[int] = None
 ) -> str:
     """Applies watermark overlay and/or compresses an image and saves the result."""
-    base = Image.open(input_path)
-    base = ImageOps.exif_transpose(base)
-    orig_mode = base.mode
-    
-    settings = getattr(config, "export_settings", None)
-    is_compress_only = settings and settings.mode == "compress_only"
-    quality = output_quality if output_quality is not None else (settings.image_quality if settings else 90)
-    
-    if is_compress_only:
-        composite = base.convert("RGBA") if orig_mode in ["RGBA", "P"] else base.convert("RGB")
-    else:
-        working_base = base.convert("RGBA")
-        overlay = create_watermark_overlay(working_base.size, config, uploads_dir)
-        composite = Image.alpha_composite(working_base, overlay)
+    with Image.open(input_path) as raw_base:
+        base = ImageOps.exif_transpose(raw_base)
+        orig_mode = base.mode
+        
+        settings = getattr(config, "export_settings", None)
+        is_compress_only = settings and settings.mode == "compress_only"
+        quality = output_quality if output_quality is not None else (settings.image_quality if settings else 90)
+        target_mb = getattr(settings, "target_size_mb", None) if settings else None
+        
+        if is_compress_only:
+            composite = base.convert("RGBA") if orig_mode in ["RGBA", "P"] else base.convert("RGB")
+        else:
+            working_base = base.convert("RGBA")
+            overlay = create_watermark_overlay(working_base.size, config, uploads_dir)
+            composite = Image.alpha_composite(working_base, overlay)
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     ext = os.path.splitext(output_path)[1].lower()
     if ext in [".jpg", ".jpeg"]:
         final_img = composite.convert("RGB")
-        if is_compress_only:
+        subsampling = None if is_compress_only else 0
+        if target_mb and float(target_mb) > 0:
+            _save_to_target_size(final_img, output_path, "JPEG", float(target_mb), quality, subsampling=subsampling)
+        elif is_compress_only:
             # Standard 4:2:0 subsampling actually reduces JPEG size; 4:4:4 inflates q85/q95 exports.
             final_img.save(output_path, "JPEG", quality=quality, optimize=True)
         else:
@@ -243,7 +303,10 @@ def apply_watermark_to_image(
     elif ext == ".png":
         composite.save(output_path, "PNG", optimize=True)
     elif ext == ".webp":
-        composite.save(output_path, "WEBP", quality=quality, method=6)
+        if target_mb and float(target_mb) > 0:
+            _save_to_target_size(composite, output_path, "WEBP", float(target_mb), quality)
+        else:
+            composite.save(output_path, "WEBP", quality=quality, method=6)
     elif ext in [".tif", ".tiff"]:
         composite.convert("RGB").save(output_path, "TIFF", compression="tiff_deflate")
     else:

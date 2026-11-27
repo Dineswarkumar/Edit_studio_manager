@@ -79,98 +79,124 @@ def apply_watermark_to_video(
         crf = "23"
         audio_args = ["-c:a", "aac", "-b:a", "160k"]
         
-    # Resolution scaling expression
-    res_map = {
-        "1080p": "min(1920,iw)",
-        "720p": "min(1280,iw)",
-        "480p": "min(854,iw)"
+    # Orientation-aware resolution scaling: cap the long edge so portrait 4K -> 1080x1920, landscape 4K -> 1920x1080
+    res_long_edge_map = {
+        "1080p": 1920,
+        "720p": 1280,
+        "480p": 854,
     }
-    scale_limit = res_map.get(settings.video_resolution)
+    max_long_edge = res_long_edge_map.get(settings.video_resolution)
+    scale_filter = (
+        f"scale='if(gte(iw,ih),min({max_long_edge},iw),-2)':'if(gte(iw,ih),-2,min({max_long_edge},ih))'"
+        if max_long_edge
+        else None
+    )
     
+    target_size_mb = getattr(settings, "target_size_mb", None)
+    target_video_kbps = None
+    if target_size_mb and float(target_size_mb) > 0 and duration > 0:
+        audio_kbps = 0 if preset_name == "master" else (96 if preset_name == "compressed" else 128)
+        total_kbps = (float(target_size_mb) * 8192.0) / max(1.0, duration)
+        target_video_kbps = max(120, int(total_kbps - audio_kbps))
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     overlay_temp_path = None
     out_ext = os.path.splitext(output_path)[1].lower()
     is_webm = out_ext == ".webm"
 
-    if is_webm:
-        vp9_crf = str(min(63, int(crf) + 6))
-        video_codec_args = ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", vp9_crf]
-        if preset_name == "master":
-            codec_audio_args = ["-c:a", "copy"]
-        elif preset_name == "compressed":
-            codec_audio_args = ["-c:a", "libopus", "-b:a", "96k"]
-        else:
-            codec_audio_args = ["-c:a", "libopus", "-b:a", "128k"]
-        container_args = []
-    else:
-        video_codec_args = ["-c:v", "libx264", "-preset", "veryfast", "-crf", crf, "-pix_fmt", "yuv420p"]
-        codec_audio_args = audio_args
-        container_args = ["-movflags", "+faststart"]
-
+    from engine.hw_accel import detect_best_h264_encoder, build_h264_encode_args
+    encoders_to_try = ["libvpx-vp9"] if is_webm else (
+        ["h264_qsv", "libx264"] if detect_best_h264_encoder() == "h264_qsv" else ["libx264"]
+    )
     pad_filter = "pad=ceil(iw/2)*2:ceil(ih/2)*2"
 
     try:
-        cmd = ["ffmpeg", "-y", "-i", input_path]
-
-        if is_compress_only:
-            vf_chain = f"scale='{scale_limit}:-2',{pad_filter}" if scale_limit else pad_filter
-            cmd.extend(["-vf", vf_chain])
-            cmd.extend(video_codec_args)
-            cmd.extend(codec_audio_args)
-            cmd.extend([*container_args, output_path])
-        else:
-            # Watermark + Compression in a single pass
+        if not is_compress_only:
             overlay = create_watermark_overlay((width, height), config, uploads_dir)
             overlay_temp_path = output_path + ".overlay.png"
             overlay.save(overlay_temp_path, "PNG")
 
-            cmd.extend(["-i", overlay_temp_path])
-
-            if scale_limit:
-                filter_graph = f"[0:v][1:v]overlay=0:0,scale='{scale_limit}:-2',{pad_filter}[outv]"
+        last_err = ""
+        for chosen_enc in encoders_to_try:
+            if is_webm:
+                vp9_crf = str(min(63, int(crf) + 6))
+                if target_video_kbps:
+                    video_codec_args = ["-c:v", "libvpx-vp9", "-b:v", f"{target_video_kbps}k"]
+                else:
+                    video_codec_args = ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", vp9_crf]
+                if preset_name == "master":
+                    codec_audio_args = ["-c:a", "copy"]
+                elif preset_name == "compressed":
+                    codec_audio_args = ["-c:a", "libopus", "-b:a", "96k"]
+                else:
+                    codec_audio_args = ["-c:a", "libopus", "-b:a", "128k"]
+                container_args = []
             else:
-                filter_graph = f"[0:v][1:v]overlay=0:0,{pad_filter}[outv]"
+                video_codec_args = build_h264_encode_args(
+                    chosen_enc,
+                    crf=int(crf),
+                    target_bitrate_kbps=target_video_kbps,
+                    preset="veryfast",
+                )
+                codec_audio_args = audio_args
+                container_args = ["-movflags", "+faststart"] if out_ext in {".mp4", ".mov", ".m4v"} else []
 
-            cmd.extend([
-                "-filter_complex", filter_graph,
-                "-map", "[outv]",
-                "-map", "0:a?",
-            ])
+            cmd = ["ffmpeg", "-y", "-i", input_path]
+            if is_compress_only:
+                vf_chain = f"{scale_filter},{pad_filter}" if scale_filter else pad_filter
+                if chosen_enc == "h264_qsv":
+                    vf_chain += ",format=nv12"
+                cmd.extend(["-vf", vf_chain])
+            else:
+                cmd.extend(["-i", overlay_temp_path])
+                if scale_filter:
+                    filter_graph = f"[0:v][1:v]overlay=0:0,{scale_filter},{pad_filter}"
+                else:
+                    filter_graph = f"[0:v][1:v]overlay=0:0,{pad_filter}"
+                if chosen_enc == "h264_qsv":
+                    filter_graph += ",format=nv12"
+                filter_graph += "[outv]"
+                cmd.extend(["-filter_complex", filter_graph, "-map", "[outv]", "-map", "0:a?"])
+
             cmd.extend(video_codec_args)
             cmd.extend(codec_audio_args)
             cmd.extend([*container_args, output_path])
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            encoding="utf-8",
-            errors="replace"
-        )
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                encoding="utf-8",
+                errors="replace"
+            )
 
-        time_pattern = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
-        stderr_tail = []
+            time_pattern = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
+            stderr_tail = []
 
-        while True:
-            line = process.stderr.readline()
-            if not line and process.poll() is not None:
-                break
+            while True:
+                line = process.stderr.readline()
+                if not line and process.poll() is not None:
+                    break
 
-            if line:
-                stderr_tail.append(line.rstrip())
-                if len(stderr_tail) > 30:
-                    stderr_tail.pop(0)
-                if duration > 0 and progress_callback:
-                    match = time_pattern.search(line)
-                    if match:
-                        hours, mins, secs = match.groups()
-                        current_time = float(hours) * 3600 + float(mins) * 60 + float(secs)
-                        progress = min(1.0, current_time / duration)
-                        progress_callback(progress)
+                if line:
+                    stderr_tail.append(line.rstrip())
+                    if len(stderr_tail) > 30:
+                        stderr_tail.pop(0)
+                    if duration > 0 and progress_callback:
+                        match = time_pattern.search(line)
+                        if match:
+                            hours, mins, secs = match.groups()
+                            current_time = float(hours) * 3600 + float(mins) * 60 + float(secs)
+                            progress = min(1.0, current_time / duration)
+                            progress_callback(progress)
 
-        return_code = process.poll()
-        if return_code != 0:
+            return_code = process.poll()
+            if return_code == 0:
+                if progress_callback:
+                    progress_callback(1.0)
+                return output_path
+
             rem = process.stderr.read()
             if rem:
                 stderr_tail.append(rem.strip())
@@ -179,13 +205,11 @@ def apply_watermark_to_video(
                     os.remove(output_path)
                 except Exception:
                     pass
-            err_msg = "\n".join(stderr_tail)[-1200:]
-            raise RuntimeError(f"FFmpeg failed with exit code {return_code}: {err_msg}")
-            
-        if progress_callback:
-            progress_callback(1.0)
-            
-        return output_path
+            last_err = "\n".join(stderr_tail)[-1200:]
+            if chosen_enc != "h264_qsv":
+                raise RuntimeError(f"FFmpeg failed with exit code {return_code}: {last_err}")
+
+        raise RuntimeError(f"FFmpeg failed: {last_err}")
     finally:
         if overlay_temp_path and os.path.exists(overlay_temp_path):
             try:

@@ -364,7 +364,8 @@ def render_thumbnail(
             if not os.path.exists(st_path):
                 continue
             try:
-                st_img = Image.open(st_path).convert("RGBA")
+                with Image.open(st_path) as raw_st:
+                    st_img = raw_st.convert("RGBA")
                 scale_pct = float(st.get("scale_percent", 25.0))
                 target_w = max(20, int(canvas_w * (scale_pct / 100.0)))
                 aspect = st_img.height / st_img.width

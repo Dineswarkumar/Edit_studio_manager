@@ -6,6 +6,7 @@ A lightweight, local-first web suite for everyday image and video editing. Built
 
 - **Watermark Studio** (`/watermark.html`) — Add multi-layer text and logo overlays to images and videos with 9-grid anchoring, freeform drag positioning, tiled patterns, and batch ZIP export.
 - **Compressor Studio** (`/compressor.html`) — Shrink image and video file sizes with customizable quality controls.
+- **File Converter** (`/converter.html`) — Convert image, video, audio, PDF, and Office formats, and create or extract ZIP archives. Office and 7z/RAR support depends on optional local tools.
 - **Thumbnail Studio** (`/thumbnail.html`) — Extract key frames from videos, generate contact-sheet storyboards, preview edits live, and export batches as a ZIP.
 - **Collage Studio** (`/collage.html`) — Arrange photos into preset or custom grids with draggable slots, annotations, and canvas export.
 - **Privacy / Censor Studio** (`/censor.html`) — Automatically detect faces (YuNet ONNX) and sensitive regions, track objects across video frames, or draw manual blur, pixelate, and emoji censor boxes.

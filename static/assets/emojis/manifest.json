@@ -1,0 +1,475 @@
+{
+  "pack": "Microsoft Fluent UI Emoji 3D (MIT)",
+  "size": 256,
+  "emojis": [
+    {
+      "id": "sunglasses",
+      "label": "Cool Sunglasses",
+      "category": "faces",
+      "char": "😎",
+      "url": "/assets/emojis/sunglasses.png"
+    },
+    {
+      "id": "smiley",
+      "label": "Grinning Face",
+      "category": "faces",
+      "char": "😀",
+      "url": "/assets/emojis/smiley.png"
+    },
+    {
+      "id": "clown",
+      "label": "Clown Face",
+      "category": "faces",
+      "char": "🤡",
+      "url": "/assets/emojis/clown.png"
+    },
+    {
+      "id": "heart_eyes",
+      "label": "Heart Eyes",
+      "category": "faces",
+      "char": "😍",
+      "url": "/assets/emojis/heart_eyes.png"
+    },
+    {
+      "id": "cat",
+      "label": "Grinning Cat",
+      "category": "faces",
+      "char": "😺",
+      "url": "/assets/emojis/cat.png"
+    },
+    {
+      "id": "alien",
+      "label": "Alien",
+      "category": "faces",
+      "char": "👽",
+      "url": "/assets/emojis/alien.png"
+    },
+    {
+      "id": "robot",
+      "label": "Robot",
+      "category": "faces",
+      "char": "🤖",
+      "url": "/assets/emojis/robot.png"
+    },
+    {
+      "id": "joy",
+      "label": "Tears of Joy",
+      "category": "faces",
+      "char": "😂",
+      "url": "/assets/emojis/joy.png"
+    },
+    {
+      "id": "rofl",
+      "label": "Rolling Laugh",
+      "category": "faces",
+      "char": "🤣",
+      "url": "/assets/emojis/rofl.png"
+    },
+    {
+      "id": "wink",
+      "label": "Winking Face",
+      "category": "faces",
+      "char": "😉",
+      "url": "/assets/emojis/wink.png"
+    },
+    {
+      "id": "blush",
+      "label": "Smiling Blush",
+      "category": "faces",
+      "char": "😊",
+      "url": "/assets/emojis/blush.png"
+    },
+    {
+      "id": "smirk",
+      "label": "Smirking Face",
+      "category": "faces",
+      "char": "😏",
+      "url": "/assets/emojis/smirk.png"
+    },
+    {
+      "id": "kissing_heart",
+      "label": "Blowing Kiss",
+      "category": "faces",
+      "char": "😘",
+      "url": "/assets/emojis/kissing_heart.png"
+    },
+    {
+      "id": "partying",
+      "label": "Partying Face",
+      "category": "faces",
+      "char": "🥳",
+      "url": "/assets/emojis/partying.png"
+    },
+    {
+      "id": "mind_blown",
+      "label": "Mind Blown",
+      "category": "faces",
+      "char": "🤯",
+      "url": "/assets/emojis/mind_blown.png"
+    },
+    {
+      "id": "thinking",
+      "label": "Thinking Face",
+      "category": "faces",
+      "char": "🤔",
+      "url": "/assets/emojis/thinking.png"
+    },
+    {
+      "id": "shushing",
+      "label": "Shushing Face",
+      "category": "faces",
+      "char": "🤫",
+      "url": "/assets/emojis/shushing.png"
+    },
+    {
+      "id": "zany",
+      "label": "Zany Face",
+      "category": "faces",
+      "char": "🤪",
+      "url": "/assets/emojis/zany.png"
+    },
+    {
+      "id": "star_struck",
+      "label": "Star Struck",
+      "category": "faces",
+      "char": "🤩",
+      "url": "/assets/emojis/star_struck.png"
+    },
+    {
+      "id": "pleading",
+      "label": "Pleading Face",
+      "category": "faces",
+      "char": "🥺",
+      "url": "/assets/emojis/pleading.png"
+    },
+    {
+      "id": "sob",
+      "label": "Loudly Crying",
+      "category": "faces",
+      "char": "😭",
+      "url": "/assets/emojis/sob.png"
+    },
+    {
+      "id": "scream",
+      "label": "Screaming Fear",
+      "category": "faces",
+      "char": "😱",
+      "url": "/assets/emojis/scream.png"
+    },
+    {
+      "id": "rage",
+      "label": "Enraged Face",
+      "category": "faces",
+      "char": "😡",
+      "url": "/assets/emojis/rage.png"
+    },
+    {
+      "id": "skull",
+      "label": "Skull",
+      "category": "faces",
+      "char": "💀",
+      "url": "/assets/emojis/skull.png"
+    },
+    {
+      "id": "ghost",
+      "label": "Ghost",
+      "category": "faces",
+      "char": "👻",
+      "url": "/assets/emojis/ghost.png"
+    },
+    {
+      "id": "devil",
+      "label": "Smiling Devil",
+      "category": "faces",
+      "char": "😈",
+      "url": "/assets/emojis/devil.png"
+    },
+    {
+      "id": "melting_face",
+      "label": "Melting Face",
+      "category": "faces",
+      "char": "🫠",
+      "url": "/assets/emojis/melting_face.png"
+    },
+    {
+      "id": "saluting_face",
+      "label": "Saluting Face",
+      "category": "faces",
+      "char": "🫡",
+      "url": "/assets/emojis/saluting_face.png"
+    },
+    {
+      "id": "peeking_eye",
+      "label": "Peeking Eye",
+      "category": "faces",
+      "char": "🫣",
+      "url": "/assets/emojis/peeking_eye.png"
+    },
+    {
+      "id": "holding_tears",
+      "label": "Holding Back Tears",
+      "category": "faces",
+      "char": "🥹",
+      "url": "/assets/emojis/holding_tears.png"
+    },
+    {
+      "id": "smiling_hearts",
+      "label": "Smiling With Hearts",
+      "category": "faces",
+      "char": "🥰",
+      "url": "/assets/emojis/smiling_hearts.png"
+    },
+    {
+      "id": "nerd",
+      "label": "Nerd Face",
+      "category": "faces",
+      "char": "🤓",
+      "url": "/assets/emojis/nerd.png"
+    },
+    {
+      "id": "cowboy",
+      "label": "Cowboy Hat",
+      "category": "faces",
+      "char": "🤠",
+      "url": "/assets/emojis/cowboy.png"
+    },
+    {
+      "id": "cold_face",
+      "label": "Cold Face",
+      "category": "faces",
+      "char": "🥶",
+      "url": "/assets/emojis/cold_face.png"
+    },
+    {
+      "id": "hot_face",
+      "label": "Hot Face",
+      "category": "faces",
+      "char": "🥵",
+      "url": "/assets/emojis/hot_face.png"
+    },
+    {
+      "id": "money_mouth",
+      "label": "Money Mouth",
+      "category": "faces",
+      "char": "🤑",
+      "url": "/assets/emojis/money_mouth.png"
+    },
+    {
+      "id": "dotted_face",
+      "label": "Anonymous / Dotted",
+      "category": "privacy",
+      "char": "🫥",
+      "url": "/assets/emojis/dotted_face.png"
+    },
+    {
+      "id": "disguised",
+      "label": "Disguised Face",
+      "category": "privacy",
+      "char": "🥸",
+      "url": "/assets/emojis/disguised.png"
+    },
+    {
+      "id": "zipper_mouth",
+      "label": "Zipper Mouth",
+      "category": "privacy",
+      "char": "🤐",
+      "url": "/assets/emojis/zipper_mouth.png"
+    },
+    {
+      "id": "see_no_evil",
+      "label": "See No Evil",
+      "category": "privacy",
+      "char": "🙈",
+      "url": "/assets/emojis/see_no_evil.png"
+    },
+    {
+      "id": "hear_no_evil",
+      "label": "Hear No Evil",
+      "category": "privacy",
+      "char": "🙉",
+      "url": "/assets/emojis/hear_no_evil.png"
+    },
+    {
+      "id": "speak_no_evil",
+      "label": "Speak No Evil",
+      "category": "privacy",
+      "char": "🙊",
+      "url": "/assets/emojis/speak_no_evil.png"
+    },
+    {
+      "id": "locked",
+      "label": "Locked Privacy",
+      "category": "privacy",
+      "char": "🔒",
+      "url": "/assets/emojis/locked.png"
+    },
+    {
+      "id": "shield",
+      "label": "Privacy Shield",
+      "category": "privacy",
+      "char": "🛡️",
+      "url": "/assets/emojis/shield.png"
+    },
+    {
+      "id": "censored",
+      "label": "No Entry / Prohibited",
+      "category": "badges",
+      "char": "🚫",
+      "url": "/assets/emojis/censored.png"
+    },
+    {
+      "id": "no_under_18",
+      "label": "18+ Badge",
+      "category": "badges",
+      "char": "🔞",
+      "url": "/assets/emojis/no_under_18.png"
+    },
+    {
+      "id": "check_mark",
+      "label": "Verified Check",
+      "category": "badges",
+      "char": "✅",
+      "url": "/assets/emojis/check_mark.png"
+    },
+    {
+      "id": "red_heart",
+      "label": "Red Heart",
+      "category": "hearts",
+      "char": "❤️",
+      "url": "/assets/emojis/red_heart.png"
+    },
+    {
+      "id": "pink_heart",
+      "label": "Pink Heart",
+      "category": "hearts",
+      "char": "🩷",
+      "url": "/assets/emojis/pink_heart.png"
+    },
+    {
+      "id": "sparkling_heart",
+      "label": "Sparkling Heart",
+      "category": "hearts",
+      "char": "💖",
+      "url": "/assets/emojis/sparkling_heart.png"
+    },
+    {
+      "id": "purple_heart",
+      "label": "Purple Heart",
+      "category": "hearts",
+      "char": "💜",
+      "url": "/assets/emojis/purple_heart.png"
+    },
+    {
+      "id": "black_heart",
+      "label": "Black Heart",
+      "category": "hearts",
+      "char": "🖤",
+      "url": "/assets/emojis/black_heart.png"
+    },
+    {
+      "id": "heart_on_fire",
+      "label": "Heart on Fire",
+      "category": "hearts",
+      "char": "❤️‍🔥",
+      "url": "/assets/emojis/heart_on_fire.png"
+    },
+    {
+      "id": "fire",
+      "label": "Fire",
+      "category": "effects",
+      "char": "🔥",
+      "url": "/assets/emojis/fire.png"
+    },
+    {
+      "id": "sparkles",
+      "label": "Sparkles",
+      "category": "effects",
+      "char": "✨",
+      "url": "/assets/emojis/sparkles.png"
+    },
+    {
+      "id": "lightning",
+      "label": "High Voltage",
+      "category": "effects",
+      "char": "⚡",
+      "url": "/assets/emojis/lightning.png"
+    },
+    {
+      "id": "hundred",
+      "label": "100 Score",
+      "category": "effects",
+      "char": "💯",
+      "url": "/assets/emojis/hundred.png"
+    },
+    {
+      "id": "eyes",
+      "label": "Eyes",
+      "category": "stickers",
+      "char": "👀",
+      "url": "/assets/emojis/eyes.png"
+    },
+    {
+      "id": "lips",
+      "label": "Mouth / Lips",
+      "category": "stickers",
+      "char": "👄",
+      "url": "/assets/emojis/lips.png"
+    },
+    {
+      "id": "poop",
+      "label": "Pile of Poo",
+      "category": "stickers",
+      "char": "💩",
+      "url": "/assets/emojis/poop.png"
+    },
+    {
+      "id": "crown",
+      "label": "Crown",
+      "category": "stickers",
+      "char": "👑",
+      "url": "/assets/emojis/crown.png"
+    },
+    {
+      "id": "gem",
+      "label": "Gem Stone",
+      "category": "stickers",
+      "char": "💎",
+      "url": "/assets/emojis/gem.png"
+    },
+    {
+      "id": "camera_flash",
+      "label": "Camera Flash",
+      "category": "stickers",
+      "char": "📸",
+      "url": "/assets/emojis/camera_flash.png"
+    },
+    {
+      "id": "thumbs_up",
+      "label": "Thumbs Up",
+      "category": "gestures",
+      "char": "👍",
+      "url": "/assets/emojis/thumbs_up.png"
+    },
+    {
+      "id": "peace",
+      "label": "Victory / Peace",
+      "category": "gestures",
+      "char": "✌️",
+      "url": "/assets/emojis/peace.png"
+    },
+    {
+      "id": "wave",
+      "label": "Waving Hand",
+      "category": "gestures",
+      "char": "👋",
+      "url": "/assets/emojis/wave.png"
+    },
+    {
+      "id": "heart_hands",
+      "label": "Heart Hands",
+      "category": "gestures",
+      "char": "🫶",
+      "url": "/assets/emojis/heart_hands.png"
+    }
+  ]
+}

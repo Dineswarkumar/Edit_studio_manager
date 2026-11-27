@@ -212,10 +212,263 @@ def test_api_censor_video_single_face_flow():
     raise TimeoutError("Single-face video censor job timed out!")
 
 
+def test_api_capabilities_and_shapes_preview():
+    cap_res = client.get("/api/system/capabilities")
+    assert cap_res.status_code == 200
+    caps = cap_res.json()
+    assert "hw_accel" in caps and "nudenet_available" in caps
+    assert caps["nudenet_available"] is True
+
+    # Upload an image and verify 5-shape + exact-face-fit preview
+    img = create_synthetic_face_image(360, 280, 90, 40, 120)
+    img_path = os.path.join(TEST_DIR, "shapes_preview.jpg")
+    cv2.imwrite(img_path, img)
+    with open(img_path, "rb") as f:
+        up = client.post("/api/upload-media", files={"files": ("shapes_preview.jpg", f, "image/jpeg")})
+    assert up.status_code == 200
+    file_id = up.json()["media"][0]["id"]
+
+    det = client.post("/api/censor/detect-faces", json={"file_id": file_id, "frame_sec": 0.0, "face_fit": "exact", "padding_percent": 0.0})
+    assert det.status_code == 200
+    assert len(det.json()["faces"]) >= 1
+
+    for shape in ("circle", "triangle", "heart"):
+        prev = client.post("/api/censor/preview", json={
+            "file_id": file_id,
+            "frame_sec": 0.0,
+            "boxes": det.json()["faces"],
+            "mask_config": {"mask_type": "blur", "intensity": 75, "feather": 25, "shape": shape}
+        })
+        assert prev.status_code == 200
+        assert "preview_url" in prev.json()
+
+
+def test_api_video_batch_and_error_isolation():
+    vid1 = os.path.join(TEST_DIR, "batch_clip_1.mp4")
+    vid2 = os.path.join(TEST_DIR, "batch_clip_2.mp4")
+    for vp in (vid1, vid2):
+        out = cv2.VideoWriter(vp, cv2.VideoWriter_fourcc(*"mp4v"), 15.0, (320, 240))
+        for i in range(10):
+            out.write(create_synthetic_face_image(320, 240, 90 + i * 2, 50, 90))
+        out.release()
+
+    with open(vid1, "rb") as f1, open(vid2, "rb") as f2:
+        up = client.post("/api/upload-media", files=[
+            ("files", ("batch_clip_1.mp4", f1, "video/mp4")),
+            ("files", ("batch_clip_2.mp4", f2, "video/mp4")),
+        ])
+    assert up.status_code == 200
+    media = up.json()["media"]
+    assert len(media) == 2
+
+    res = client.post("/api/censor/process-video-batch", json={
+        "items": [
+            {"file_id": media[0]["id"], "mode": "faces_all"},
+            {"file_id": media[1]["id"], "mode": "faces_all"},
+            {"file_id": "non_existent_clip_id", "mode": "faces_all"},
+        ],
+        "mask_config": {"mask_type": "blur", "intensity": 65, "shape": "heart"}
+    })
+    assert res.status_code == 200
+    job_id = res.json()["job_id"]
+
+    for _ in range(60):
+        time.sleep(0.3)
+        st = client.get(f"/api/job/{job_id}")
+        assert st.status_code == 200
+        job = st.json()
+        if job["status"] == "completed":
+            items = job.get("items", [])
+            assert len(items) == 3
+            ok_items = [it for it in items if it["status"] == "completed"]
+            failed_items = [it for it in items if it["status"] == "failed"]
+            assert len(ok_items) == 2 and len(failed_items) == 1
+            assert job["download_url"].endswith(".zip") or "download" in job["download_url"]
+            return
+        elif job["status"] == "failed":
+            raise RuntimeError(f"Batch video job failed unexpectedly: {job.get('error')}")
+    raise TimeoutError("Batch video job timed out!")
+
+
+def test_api_lan_pin_auth_guard():
+    import core.state as app_state
+    was_enabled = bool(app_state.lan_auth_state["enabled"])
+    orig_pin = app_state.lan_auth_state["pin"]
+    orig_tokens = set(app_state.lan_auth_state["tokens"])
+    try:
+        app_state.enable_lan_pin("123456")
+        bad = client.post("/api/auth/lan-verify", json={"pin": "000000"})
+        assert bad.status_code == 401
+        ok = client.post("/api/auth/lan-verify", json={"pin": "123456"})
+        assert ok.status_code == 200
+        token = ok.json()["token"]
+        assert app_state.is_lan_token_valid(token) is True
+        status = client.get("/api/auth/lan-status")
+        assert status.status_code == 200
+        assert status.json()["lan_protected"] is True
+    finally:
+        if was_enabled and orig_pin:
+            app_state.enable_lan_pin(orig_pin)
+            app_state.lan_auth_state["tokens"].update(orig_tokens)
+        else:
+            app_state.disable_lan_pin()
+
+
+def test_api_null_eraser_and_large_brush_radius():
+    import socket
+    from server import _resolve_bind_port
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    sock.bind(("0.0.0.0", 0))
+    sock.listen(1)
+    occupied = sock.getsockname()[1]
+    try:
+        resolved = _resolve_bind_port("0.0.0.0", occupied, allow_fallback=True)
+        assert resolved != occupied and resolved > occupied
+    finally:
+        sock.close()
+
+    img_path = os.path.join(TEST_DIR, "test_brush_payload.jpg")
+    cv2.imwrite(img_path, create_synthetic_face_image(480, 360, face_x=150, face_y=80, face_size=140))
+    with open(img_path, "rb") as f:
+        up = client.post("/api/upload-media", files={"files": ("test_brush_payload.jpg", f, "image/jpeg")})
+    assert up.status_code == 200
+    fid = up.json()["media"][0]["id"]
+    try:
+        box = {
+            "x": 140,
+            "y": 70,
+            "w": 160,
+            "h": 160,
+            "kind": "brush",
+            "brush_points": [[160, 90], [220, 140]],
+            "brush_radius": 1820,
+            "eraser_points": [[190, 120]],
+            "eraser_radius": None,
+            "label": "Brush Mask #1",
+        }
+        prev = client.post("/api/censor/preview", json={"file_id": fid, "boxes": [box]})
+        assert prev.status_code == 200, prev.text
+        batch = client.post("/api/censor/process-batch", json={"items": [{"file_id": fid, "boxes": [box]}]})
+        assert batch.status_code == 200, batch.text
+        assert batch.json()["processed_count"] == 1
+    finally:
+        client.delete(f"/api/media/{fid}")
+
+
+def test_api_nsfw_all_classes_and_ignores_eyes_region():
+    from engine.censor_processor import NUDENET_FACE_CLASSES, NUDENET_LABELS
+    page = client.get("/censor.html")
+    assert page.status_code == 200
+    html = page.text
+    assert 'src="/censor.js"' not in html
+    assert 'src="/js/censor.js' in html
+    for needle in ('id="protectionTaskSection"', 'id="protectionModeSegments"', 'protection-mode-btn', 'id="panelNsfwMode"', 'id="nsfwPartsCheckboxes"'):
+        assert needle in html, f"Missing expected UI element {needle} in served /censor.html"
+    # Mode switcher must sit outside hidden mediaDetailsPanel so it is visible on initial page load
+    assert html.index('id="protectionTaskSection"') < html.index('id="mediaDetailsPanel"')
+    body_classes = [c for c in NUDENET_LABELS if c not in NUDENET_FACE_CLASSES]
+    for cls in body_classes:
+        assert f'value="{cls}"' in html, f"Missing NudeNet class checkbox in censor.html: {cls}"
+
+    img_path = os.path.join(TEST_DIR, "test_nsfw_full_region.jpg")
+    checker = np.zeros((240, 240, 3), dtype=np.uint8)
+    for y in range(0, 240, 10):
+        for x in range(0, 240, 10):
+            if ((x // 10) + (y // 10)) % 2 == 0:
+                checker[y:y + 10, x:x + 10] = (235, 235, 235)
+    cv2.imwrite(img_path, checker)
+
+    with open(img_path, "rb") as f:
+        up = client.post("/api/upload-media", files={"files": ("test_nsfw_full_region.jpg", f, "image/jpeg")})
+    assert up.status_code == 200
+    fid = up.json()["media"][0]["id"]
+    try:
+        box = {"x": 40, "y": 40, "w": 160, "h": 160, "label": "NudeNet: Buttocks (Exposed)", "confidence": 0.9}
+        proc = client.post("/api/censor/process", json={
+            "file_id": fid,
+            "mode": "nsfw",
+            "boxes": [box],
+            "mask_config": {"mask_type": "redact", "shape": "rect", "mask_region": "eyes", "redact_text": ""}
+        })
+        assert proc.status_code == 200, proc.text
+        out_path = os.path.join("outputs", proc.json()["filename"])
+        assert os.path.isfile(out_path)
+        out_img = cv2.imread(out_path)
+        # Bottom region inside box should be dark redaction (~18,18,18), not bright checkerboard
+        assert float(out_img[150:190, 60:180].mean()) < 40.0
+    finally:
+        client.delete(f"/api/media/{fid}")
+
+
+def test_api_per_class_nsfw_filtering_and_rotated_face_detect():
+    from routers.censor import get_censor_processor
+
+    # Upload a 90 deg CW rotated face image and confirm /api/censor/detect-faces recovers it
+    img_path = os.path.join(TEST_DIR, "test_rot90_face.jpg")
+    upright = create_synthetic_face_image(360, 360, face_x=110, face_y=90, face_size=130)
+    rot90 = cv2.rotate(upright, cv2.ROTATE_90_CLOCKWISE)
+    cv2.imwrite(img_path, rot90)
+
+    with open(img_path, "rb") as f:
+        up = client.post("/api/upload-media", files={"files": ("test_rot90_face.jpg", f, "image/jpeg")})
+    assert up.status_code == 200
+    fid = up.json()["media"][0]["id"]
+    try:
+        df = client.post("/api/censor/detect-faces", json={"file_id": fid, "padding_percent": 0.1})
+        assert df.status_code == 200, df.text
+        assert len(df.json()["faces"]) >= 1, "API failed to detect 90-degree rotated face"
+
+        proc = get_censor_processor()
+        orig_infer = proc.nudenet._infer_single_orientation
+
+        def fake_multi_class(img_bgr, conf_threshold, active_classes):
+            preds = [
+                ([40.0, 40.0, 80.0, 80.0], 0.88, "BUTTOCKS_EXPOSED"),
+                ([160.0, 120.0, 80.0, 80.0], 0.85, "FEMALE_BREAST_EXPOSED"),
+            ]
+            kept = [p for p in preds if p[2] in active_classes]
+            return [p[0] for p in kept], [p[1] for p in kept], [p[2] for p in kept]
+
+        proc.nudenet._infer_single_orientation = fake_multi_class
+        try:
+            r_butt = client.post("/api/censor/detect-nsfw", json={
+                "file_id": fid,
+                "sensitivity": 0.5,
+                "exclude_faces": False,
+                "nsfw_classes": ["BUTTOCKS_EXPOSED"],
+            })
+            assert r_butt.status_code == 200, r_butt.text
+            cands = r_butt.json()["candidates"]
+            assert len(cands) == 1 and "Buttocks" in cands[0]["label"]
+
+            r_breast = client.post("/api/censor/detect-nsfw", json={
+                "file_id": fid,
+                "sensitivity": 0.5,
+                "exclude_faces": False,
+                "nsfw_classes": ["FEMALE_BREAST_EXPOSED"],
+            })
+            assert r_breast.status_code == 200, r_breast.text
+            cands2 = r_breast.json()["candidates"]
+            assert len(cands2) == 1 and "Breast" in cands2[0]["label"]
+        finally:
+            proc.nudenet._infer_single_orientation = orig_infer
+    finally:
+        client.delete(f"/api/media/{fid}")
+
+
 if __name__ == "__main__":
     test_api_censor_image_flow()
     test_api_censor_video_flow()
     test_api_censor_video_single_face_flow()
+    test_api_capabilities_and_shapes_preview()
+    test_api_video_batch_and_error_isolation()
+    test_api_lan_pin_auth_guard()
+    test_api_null_eraser_and_large_brush_radius()
+    test_api_nsfw_all_classes_and_ignores_eyes_region()
+    test_api_per_class_nsfw_filtering_and_rotated_face_detect()
     print("\n==============================================")
     print("ALL CENSOR API END-TO-END TESTS PASSED! 🚀")
     print("==============================================")
