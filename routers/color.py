@@ -16,6 +16,7 @@ from core.state import (
     THUMBS_DIR,
     UPLOADS_DIR,
     active_job_paths,
+    dedupe_output_name,
     heavy_task_slot,
     jobs,
     jobs_lock,
@@ -57,7 +58,7 @@ def list_luts():
 
 
 @router.post("/api/color/upload-lut")
-async def upload_custom_lut(file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
+def upload_custom_lut(file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     orig_name = os.path.basename((file.filename or "custom.cube").replace("\\", "/")) or "custom.cube"
     ext = os.path.splitext(orig_name)[1].lower()
     if ext != ".cube":
@@ -153,6 +154,7 @@ def _color_batch_worker(job_id: str, file_ids: List[str], config: ColorGradeConf
         job = jobs[job_id]
     total_files = max(1, len(file_ids))
     was_cancelled = False
+    used_output_names = set()
 
     try:
         for idx, fid in enumerate(file_ids):
@@ -170,7 +172,7 @@ def _color_batch_worker(job_id: str, file_ids: List[str], config: ColorGradeConf
             name_root, orig_ext = os.path.splitext(orig_name)
             mtype = media_item.get("media_type")
             out_ext = ".mp4" if mtype == "video" else _resolve_color_image_ext(orig_ext, config.export_format)
-            out_name = f"graded_{name_root}{out_ext}"
+            out_name = dedupe_output_name(used_output_names, f"graded_{name_root}{out_ext}")
             out_path = os.path.join(OUTPUTS_DIR, f"{job_id}_{out_name}")
 
             with jobs_lock:
@@ -251,7 +253,7 @@ def _color_batch_worker(job_id: str, file_ids: List[str], config: ColorGradeConf
 def start_color_batch(req: ColorBatchRequest, bg: BackgroundTasks):
     if not req.file_ids:
         raise HTTPException(status_code=400, detail="No files selected")
-    valid_ids = [fid for fid in req.file_ids if fid in uploaded_media]
+    valid_ids = list(dict.fromkeys(fid for fid in req.file_ids if fid in uploaded_media))
     if not valid_ids:
         raise HTTPException(status_code=404, detail="Uploaded media items not found")
 

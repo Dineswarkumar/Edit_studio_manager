@@ -79,13 +79,18 @@ def apply_watermark_to_video(
         crf = "23"
         audio_args = ["-c:a", "aac", "-b:a", "160k"]
         
-    # Resolution scaling expression
-    res_map = {
-        "1080p": "min(1920,iw)",
-        "720p": "min(1280,iw)",
-        "480p": "min(854,iw)"
+    # Orientation-aware resolution scaling: cap the long edge so portrait 4K -> 1080x1920, landscape 4K -> 1920x1080
+    res_long_edge_map = {
+        "1080p": 1920,
+        "720p": 1280,
+        "480p": 854,
     }
-    scale_limit = res_map.get(settings.video_resolution)
+    max_long_edge = res_long_edge_map.get(settings.video_resolution)
+    scale_filter = (
+        f"scale='if(gte(iw,ih),min({max_long_edge},iw),-2)':'if(gte(iw,ih),-2,min({max_long_edge},ih))'"
+        if max_long_edge
+        else None
+    )
     
     target_size_mb = getattr(settings, "target_size_mb", None)
     target_video_kbps = None
@@ -134,18 +139,18 @@ def apply_watermark_to_video(
                     preset="veryfast",
                 )
                 codec_audio_args = audio_args
-                container_args = ["-movflags", "+faststart"]
+                container_args = ["-movflags", "+faststart"] if out_ext in {".mp4", ".mov", ".m4v"} else []
 
             cmd = ["ffmpeg", "-y", "-i", input_path]
             if is_compress_only:
-                vf_chain = f"scale='{scale_limit}:-2',{pad_filter}" if scale_limit else pad_filter
+                vf_chain = f"{scale_filter},{pad_filter}" if scale_filter else pad_filter
                 if chosen_enc == "h264_qsv":
                     vf_chain += ",format=nv12"
                 cmd.extend(["-vf", vf_chain])
             else:
                 cmd.extend(["-i", overlay_temp_path])
-                if scale_limit:
-                    filter_graph = f"[0:v][1:v]overlay=0:0,scale='{scale_limit}:-2',{pad_filter}"
+                if scale_filter:
+                    filter_graph = f"[0:v][1:v]overlay=0:0,{scale_filter},{pad_filter}"
                 else:
                     filter_graph = f"[0:v][1:v]overlay=0:0,{pad_filter}"
                 if chosen_enc == "h264_qsv":
@@ -159,7 +164,7 @@ def apply_watermark_to_video(
 
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
                 encoding="utf-8",

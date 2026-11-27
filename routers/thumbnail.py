@@ -1,6 +1,7 @@
 """Thumbnail Studio routes."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -232,7 +233,9 @@ def preview_thumbnail_design(req: ThumbnailDesignRequest):
     if not base_path:
         raise HTTPException(status_code=404, detail="Base image not found")
 
-    out_filename = f"thumb_prev_{uuid.uuid4().hex[:8]}.jpg"
+    # Deterministic rolling preview path per base image avoids disk bloat during slider scrubbing
+    base_key = hashlib.sha1(os.path.basename(base_path).encode("utf-8")).hexdigest()[:10]
+    out_filename = f"thumb_prev_{base_key}.jpg"
     out_path = os.path.join(THUMBS_DIR, out_filename)
 
     render_thumbnail(
@@ -274,11 +277,13 @@ def export_thumbnails(req: ThumbnailExportRequest):
 
     batch_id = uuid.uuid4().hex[:8]
     outputs = []
+    errors = []
     include_main = bool(req.include_main_thumbnail and len(req.base_image_filenames) > 1)
 
     for idx, fn in enumerate(req.base_image_filenames):
         base_path = _resolve_thumb_or_upload_path(fn)
         if not base_path:
+            errors.append({"filename": fn, "error": "Base image not found"})
             continue
 
         ext = req.format
@@ -294,25 +299,32 @@ def export_thumbnails(req: ThumbnailExportRequest):
             item_label = "Generated Thumbnail" if len(req.base_image_filenames) == 1 else f"Variation {idx + 1}"
         out_path = os.path.join(OUTPUTS_DIR, out_name)
 
-        render_thumbnail(
-            base_image_path=base_path,
-            output_path=out_path,
-            aspect_ratio=req.aspect_ratio,
-            fit_mode=req.fit_mode,
-            resolution_scale=req.resolution_scale,
-            adjustments=req.adjustments,
-            text_items=req.text_items,
-            stickers=req.stickers,
-            uploads_dir=UPLOADS_DIR,
-        )
-        register_session_file(req.session_id, out_path)
+        try:
+            render_thumbnail(
+                base_image_path=base_path,
+                output_path=out_path,
+                aspect_ratio=req.aspect_ratio,
+                fit_mode=req.fit_mode,
+                resolution_scale=req.resolution_scale,
+                adjustments=req.adjustments,
+                text_items=req.text_items,
+                stickers=req.stickers,
+                uploads_dir=UPLOADS_DIR,
+            )
+            register_session_file(req.session_id, out_path)
 
-        outputs.append({
-            "filename": out_name,
-            "label": item_label,
-            "download_url": f"/api/download/{url_segment(out_name)}",
-            "size_bytes": os.path.getsize(out_path),
-        })
+            outputs.append({
+                "filename": out_name,
+                "label": item_label,
+                "download_url": f"/api/download/{url_segment(out_name)}",
+                "size_bytes": os.path.getsize(out_path),
+            })
+        except Exception as exc:
+            errors.append({"filename": fn, "error": str(exc)})
+
+    if not outputs:
+        detail = errors[0]["error"] if errors else "No valid base images found to export"
+        raise HTTPException(status_code=404, detail=detail)
 
     zip_url = None
     if len(outputs) > 1:

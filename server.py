@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.state import (
@@ -27,7 +27,7 @@ from core.state import (
     resolve_safe_path,
     uploaded_media,
 )
-from routers import audio, censor, color, media, thumbnail, watermark
+from routers import audio, censor, color, converter, media, thumbnail, watermark
 
 
 @asynccontextmanager
@@ -74,6 +74,20 @@ app.include_router(thumbnail.router)
 app.include_router(censor.router)
 app.include_router(color.router)
 app.include_router(audio.router)
+app.include_router(converter.router)
+
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="7" fill="#15263d"/>'
+    '<path d="M9 8h14v3.5H13v4.2h8.5v3.4H13V24H9V8z" fill="#60a5fa"/>'
+    "</svg>"
+)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(content=_FAVICON_SVG, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
 
 # Static frontend at root
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

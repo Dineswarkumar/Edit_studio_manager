@@ -25,11 +25,12 @@ ANDROID_OUTPUT_DIR = os.path.join(BASE_DIR, "android", "app", "build", "outputs"
 for directory in (UPLOADS_DIR, OUTPUTS_DIR, THUMBS_DIR, STATIC_DIR):
     os.makedirs(directory, exist_ok=True)
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".gif"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg", ".opus"}
 OFFICE_PACKAGE_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".epub"}
 ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+ACTIVE_JOB_STATUSES = {"in_progress", "processing"}
 
 # Shared state registries
 uploaded_media: Dict[str, dict] = {}
@@ -128,6 +129,23 @@ def url_segment(value: str) -> str:
     return urllib.parse.quote(value, safe="")
 
 
+def dedupe_output_name(used_names: Set[str], out_name: str) -> str:
+    """Ensure every item in a batch gets a unique output filename (avoids overwrites & duplicate ZIP entries)."""
+    key = out_name.lower()
+    if key not in used_names:
+        used_names.add(key)
+        return out_name
+    root, ext = os.path.splitext(out_name)
+    counter = 2
+    while True:
+        candidate = f"{root}_{counter}{ext}"
+        ckey = candidate.lower()
+        if ckey not in used_names:
+            used_names.add(ckey)
+            return candidate
+        counter += 1
+
+
 def resolve_safe_path(base_dir: str, filename: str, must_exist: bool = False) -> str:
     """Resolve user-supplied filename strictly inside base_dir without traversal or symlink escape."""
     cleaned = urllib.parse.unquote(filename or "").strip()
@@ -198,7 +216,7 @@ def janitor_loop() -> None:
         with jobs_lock:
             protected_paths: Set[str] = set()
             for jid, job in jobs.items():
-                if job.get("status") == "in_progress":
+                if job.get("status") in ACTIVE_JOB_STATUSES:
                     protected_paths.update(active_job_paths.get(jid, set()))
 
         for directory in (UPLOADS_DIR, OUTPUTS_DIR, THUMBS_DIR):
@@ -217,7 +235,7 @@ def janitor_loop() -> None:
         with jobs_lock:
             expired_jobs = [
                 jid for jid, job in jobs.items()
-                if job.get("status") != "in_progress" and (now - job.get("created_at", now)) > max_age
+                if job.get("status") not in ACTIVE_JOB_STATUSES and (now - job.get("created_at", now)) > max_age
             ]
             for jid in expired_jobs:
                 jobs.pop(jid, None)

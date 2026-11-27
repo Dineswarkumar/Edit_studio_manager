@@ -14,6 +14,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 from core.state import (
+    ACTIVE_JOB_STATUSES,
     ANDROID_OUTPUT_DIR,
     AUDIO_EXTENSIONS,
     IMAGE_EXTENSIONS,
@@ -95,7 +96,7 @@ def system_capabilities():
 
 
 @router.post("/api/upload-media")
-async def upload_media(files: List[UploadFile] = File(...), session_id: Optional[str] = Form(None)):
+def upload_media(files: List[UploadFile] = File(...), session_id: Optional[str] = Form(None)):
     """Upload one or multiple images, videos, audio clips, or documents."""
     results = []
 
@@ -136,14 +137,19 @@ async def upload_media(files: List[UploadFile] = File(...), session_id: Optional
                     if width <= 0 or height <= 0:
                         raise ValueError("Image has empty dimensions")
 
+                    # Downscale in-place for preview, then derive small thumb from preview (3x less peak RAM)
                     preview_img = img.copy()
+                    if img is not raw_img:
+                        img.close()
                     preview_img.thumbnail((1440, 1440), Image.Resampling.LANCZOS)
                     preview_img.convert("RGB").save(preview_base_path, "JPEG", quality=92)
                     register_session_file(session_id, preview_base_path)
 
-                    thumb_img = img.copy()
+                    thumb_img = preview_img.copy()
+                    preview_img.close()
                     thumb_img.thumbnail((240, 240), Image.Resampling.LANCZOS)
                     thumb_img.convert("RGB").save(thumb_path, "JPEG", quality=85)
+                    thumb_img.close()
                     register_session_file(session_id, thumb_path)
             elif media_type == "video":
                 info = get_video_info(save_path)
@@ -162,13 +168,17 @@ async def upload_media(files: List[UploadFile] = File(...), session_id: Optional
                     with Image.open(raw_frame_path) as raw_frame:
                         frame = ImageOps.exif_transpose(raw_frame)
                         preview_img = frame.copy()
+                        if frame is not raw_frame:
+                            frame.close()
                         preview_img.thumbnail((1440, 1440), Image.Resampling.LANCZOS)
                         preview_img.convert("RGB").save(preview_base_path, "JPEG", quality=92)
                         register_session_file(session_id, preview_base_path)
 
-                        thumb_img = frame.copy()
+                        thumb_img = preview_img.copy()
+                        preview_img.close()
                         thumb_img.thumbnail((240, 240), Image.Resampling.LANCZOS)
                         thumb_img.convert("RGB").save(thumb_path, "JPEG", quality=85)
+                        thumb_img.close()
                         register_session_file(session_id, thumb_path)
                 finally:
                     if os.path.exists(raw_frame_path):
@@ -212,9 +222,9 @@ async def upload_media(files: List[UploadFile] = File(...), session_id: Optional
 
 
 @router.post("/api/compress/upload")
-async def upload_compress_files(files: List[UploadFile] = File(...), session_id: Optional[str] = Form(None)):
+def upload_compress_files(files: List[UploadFile] = File(...), session_id: Optional[str] = Form(None)):
     """Accept any file for compression, keeping image/video preview handling shared."""
-    result = await upload_media(files, session_id)
+    result = upload_media(files, session_id)
     for item in result["media"]:
         if item["media_type"] == "unknown":
             item["media_type"] = "document"
@@ -294,7 +304,7 @@ def cancel_job(job_id: str):
         job = jobs.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        if job.get("status") == "in_progress":
+        if job.get("status") in ACTIVE_JOB_STATUSES:
             job["cancelled"] = True
             return {"job_id": job_id, "status": "cancelling"}
         return {"job_id": job_id, "status": job.get("status")}

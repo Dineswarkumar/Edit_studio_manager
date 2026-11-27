@@ -372,7 +372,7 @@ def video_censor_worker(
                 job = jobs.get(job_id)
                 if not job:
                     return
-                if pct >= 5.0 and job.get("cancelled"):
+                if job.get("cancelled"):
                     raise _JobCancelledError("Export cancelled by user")
                 job["progress"] = round(float(pct), 1)
                 if job["items"]:
@@ -690,7 +690,7 @@ def batch_video_censor_worker(job_id: str, req: CensorBatchProcessRequest):
                     p = round(pct / 100.0, 3)
                     with jobs_lock:
                         rec["progress"] = p
-                        jobs[job_id]["progress"] = round((i + p) / total, 3)
+                        jobs[job_id]["progress"] = round(((i + p) / total) * 100.0, 1)
 
                 with heavy_task_slot():
                     kwargs = dict(

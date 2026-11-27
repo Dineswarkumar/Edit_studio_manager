@@ -91,7 +91,8 @@ def render_image_patch(layer: WatermarkLayer, ref_dim: float, uploads_dir: str) 
         return None
         
     try:
-        logo = Image.open(img_path).convert("RGBA")
+        with Image.open(img_path) as raw_logo:
+            logo = raw_logo.convert("RGBA")
     except Exception:
         return None
         
@@ -270,21 +271,21 @@ def apply_watermark_to_image(
     output_quality: Optional[int] = None
 ) -> str:
     """Applies watermark overlay and/or compresses an image and saves the result."""
-    base = Image.open(input_path)
-    base = ImageOps.exif_transpose(base)
-    orig_mode = base.mode
-    
-    settings = getattr(config, "export_settings", None)
-    is_compress_only = settings and settings.mode == "compress_only"
-    quality = output_quality if output_quality is not None else (settings.image_quality if settings else 90)
-    target_mb = getattr(settings, "target_size_mb", None) if settings else None
-    
-    if is_compress_only:
-        composite = base.convert("RGBA") if orig_mode in ["RGBA", "P"] else base.convert("RGB")
-    else:
-        working_base = base.convert("RGBA")
-        overlay = create_watermark_overlay(working_base.size, config, uploads_dir)
-        composite = Image.alpha_composite(working_base, overlay)
+    with Image.open(input_path) as raw_base:
+        base = ImageOps.exif_transpose(raw_base)
+        orig_mode = base.mode
+        
+        settings = getattr(config, "export_settings", None)
+        is_compress_only = settings and settings.mode == "compress_only"
+        quality = output_quality if output_quality is not None else (settings.image_quality if settings else 90)
+        target_mb = getattr(settings, "target_size_mb", None) if settings else None
+        
+        if is_compress_only:
+            composite = base.convert("RGBA") if orig_mode in ["RGBA", "P"] else base.convert("RGB")
+        else:
+            working_base = base.convert("RGBA")
+            overlay = create_watermark_overlay(working_base.size, config, uploads_dir)
+            composite = Image.alpha_composite(working_base, overlay)
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     

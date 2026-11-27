@@ -1,3 +1,4 @@
+import functools
 import os
 from PIL import ImageFont
 
@@ -29,6 +30,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUNDLED_FONTS_DIR = os.path.join(BASE_DIR, "static", "assets", "fonts")
 WINDOWS_FONTS_DIR = os.environ.get("WINDIR", "C:\\Windows") + "\\Fonts"
 
+@functools.lru_cache(maxsize=128)
 def get_font(family: str = "Arial", size: int = 36, bold: bool = False) -> ImageFont.FreeTypeFont:
     name = family.strip().lower()
     if bold:

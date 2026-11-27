@@ -21,6 +21,7 @@ from core.state import (
     THUMBS_DIR,
     UPLOADS_DIR,
     active_job_paths,
+    dedupe_output_name,
     heavy_task_slot,
     jobs,
     jobs_lock,
@@ -115,7 +116,7 @@ def compress_document_file(input_path: str, output_path: str, original_name: str
 
 
 @router.post("/api/upload-watermark-logo")
-async def upload_watermark_logo(file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
+def upload_watermark_logo(file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     """Upload a raster logo/watermark image for use in image layers."""
     orig_name = os.path.basename((file.filename or "logo.png").replace("\\", "/")) or "logo.png"
     ext = os.path.splitext(orig_name)[1].lower()
@@ -176,6 +177,7 @@ def generate_preview(req: ProcessRequest):
         UPLOADS_DIR,
         output_quality=92,
     )
+    register_session_file(req.session_id, preview_output_path)
 
     return {
         "preview_url": f"/api/thumbnails/{url_segment(preview_output_name)}?t={uuid.uuid4()}",
@@ -206,6 +208,7 @@ def get_watermark_overlay(req: ProcessRequest):
     overlay_filename = f"overlay_{file_id}.png"
     overlay_path = os.path.join(THUMBS_DIR, overlay_filename)
     overlay.save(overlay_path, "PNG")
+    register_session_file(req.session_id, overlay_path)
 
     return {
         "overlay_url": f"/api/thumbnails/{url_segment(overlay_filename)}?t={uuid.uuid4()}",
@@ -217,8 +220,9 @@ def get_watermark_overlay(req: ProcessRequest):
 def process_batch_worker(job_id: str, file_ids: List[str], config: WatermarkConfig, session_id: Optional[str] = None):
     with jobs_lock:
         job = jobs[job_id]
-    total_files = len(file_ids)
+    total_files = max(1, len(file_ids))
     was_cancelled = False
+    used_output_names = set()
 
     try:
         for idx, fid in enumerate(file_ids):
@@ -241,7 +245,7 @@ def process_batch_worker(job_id: str, file_ids: List[str], config: WatermarkConf
                 safe_formats = OFFICE_PACKAGE_EXTENSIONS | {".pdf", ".zip"}
                 if ext.lower() not in safe_formats:
                     output_ext = f"{ext or '.file'}.gz"
-            out_name = f"{prefix}_{name_root}{output_ext}"
+            out_name = dedupe_output_name(used_output_names, f"{prefix}_{name_root}{output_ext}")
             out_path = os.path.join(OUTPUTS_DIR, f"{job_id}_{out_name}")
 
             with jobs_lock:
@@ -306,11 +310,15 @@ def process_batch_worker(job_id: str, file_ids: List[str], config: WatermarkConf
         with jobs_lock:
             if was_cancelled or job.get("cancelled"):
                 job["status"] = "cancelled"
-            elif job["items"] and all(it.get("status") == "failed" for it in job["items"]):
+            elif not job["items"] or all(it.get("status") == "failed" for it in job["items"]):
                 job["status"] = "failed"
+                if not job["items"]:
+                    job["error"] = "No valid media files found to process."
             else:
                 job["status"] = "completed"
     finally:
+        with jobs_lock:
+            active_job_paths.pop(job_id, None)
         release_session_job(session_id)
 
 

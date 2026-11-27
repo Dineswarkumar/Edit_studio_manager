@@ -283,7 +283,13 @@ class FaceDetector:
 
         for angle in candidate_angles:
             rot_img, m_inv = _rotate_image_for_angle(img_bgr, angle)
-            rot_boxes = self._detect_single_orientation(rot_img, padding_percent=padding_percent, face_fit=face_fit)
+            probe_limit = 640 if (angle % 90.0) != 0.0 else 960
+            rot_boxes = self._detect_single_orientation(
+                rot_img,
+                padding_percent=padding_percent,
+                face_fit=face_fit,
+                max_infer_dim=probe_limit,
+            )
             if not rot_boxes:
                 continue
             mapped_boxes: List[BoundingBox] = []
@@ -328,6 +334,7 @@ class FaceDetector:
         img_bgr: np.ndarray,
         padding_percent: float = 0.0,
         face_fit: str = "standard",
+        max_infer_dim: int = 1080,
     ) -> List[BoundingBox]:
         """
         Detects upright faces in a BGR image using OpenCV YuNet, filtering out body/torso
@@ -343,8 +350,9 @@ class FaceDetector:
 
         max_dim = max(w, h)
         scale = 1.0
-        if max_dim > 1080:
-            scale = 960.0 / float(max_dim)
+        if max_dim > max_infer_dim:
+            target_dim = min(960, max_infer_dim)
+            scale = float(target_dim) / float(max_dim)
             infer_w = max(16, int(w * scale))
             infer_h = max(16, int(h * scale))
             infer_img = cv2.resize(img_bgr, (infer_w, infer_h), interpolation=cv2.INTER_LINEAR)
